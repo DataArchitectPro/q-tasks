@@ -73,10 +73,15 @@ BarWidget {
     onLoaded: {
       root.injectPanel()
       Qt.callLater(root.injectPanel)
-      if (panelLoader.item) {
-        panelLoader.item.snapshotChanged.connect(root.applySnapshot)
-        if (panelLoader.item.snapshot) root.applySnapshot(panelLoader.item.snapshot)
-      }
+      if (panelLoader.item && panelLoader.item.snapshot)
+        root.applySnapshot(panelLoader.item.snapshot)
+    }
+  }
+
+  Connections {
+    target: panelLoader.item
+    function onSnapshotChanged() {
+      if (panelLoader.item) root.applySnapshot(panelLoader.item.snapshot)
     }
   }
 

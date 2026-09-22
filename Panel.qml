@@ -29,7 +29,6 @@ Panel {
     label: "\uf0ae",
     tooltip: ""
   })
-  signal snapshotChanged(var data)
 
   property string viewMode: "tasks" // tasks | projects
   property string filter: setting("defaultFilter", "all")
@@ -42,6 +41,8 @@ Panel {
   property bool cursorActive: false
   property string busyUuid: ""
   property string lastError: ""
+
+  property bool formFocused: false
 
   // Add form
   property string addDescription: ""
@@ -116,7 +117,6 @@ Panel {
       var data = JSON.parse(String(text || "{}"))
       root.snapshot = data
       root.lastError = data.error ? String(data.error) : ""
-      root.snapshotChanged(data)
     } catch (e) {
       root.lastError = String(e)
       console.warn("q.tasks: bad JSON", e)
@@ -334,7 +334,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: confirmDelete.opened || confirmClear.opened || addField.activeFocus || addScheduledField.activeFocus || addDueField.activeFocus || editDescField.activeFocus
+      blocked: confirmDelete.opened || confirmClear.opened || root.formFocused
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onMoveRequested: function(dx, dy) {
@@ -497,6 +497,7 @@ Panel {
                 foreground: root.foreground
                 placeholderText: root.tr("addPlaceholder")
                 verticalPadding: Style.space(4)
+                onActiveFocusChanged: root.formFocused = activeFocus || addScheduledField.activeFocus || addDueField.activeFocus
                 onAccepted: root.addTask()
               }
 
@@ -581,6 +582,7 @@ Panel {
                 foreground: root.foreground
                 placeholderText: root.tr("datesHint")
                 verticalPadding: Style.space(2)
+                onActiveFocusChanged: root.formFocused = activeFocus || addField.activeFocus || addDueField.activeFocus
               }
 
               Text {
@@ -595,6 +597,7 @@ Panel {
                 foreground: root.foreground
                 placeholderText: root.tr("datesHint")
                 verticalPadding: Style.space(2)
+                onActiveFocusChanged: root.formFocused = activeFocus || addField.activeFocus || addScheduledField.activeFocus
               }
             }
           }
@@ -697,7 +700,7 @@ Panel {
                           color: rowRoot.task && rowRoot.task.overdue ? root.urgent : root.foreground
                           font.family: root.fontFamily
                           font.pixelSize: Style.font.body
-                          font.strikeout: rowRoot.task && rowRoot.task.status === "completed"
+                          font.strikeout: !!(rowRoot.task && rowRoot.task.status === "completed")
                           elide: Text.ElideRight
                         }
 
@@ -766,6 +769,7 @@ Panel {
                         foreground: root.foreground
                         text: rowRoot.task ? rowRoot.task.description : ""
                         verticalPadding: Style.space(3)
+                        onActiveFocusChanged: root.formFocused = activeFocus
                       }
 
                       GridLayout {
@@ -832,6 +836,7 @@ Panel {
                           text: rowRoot.task ? Model.formatShortDate(rowRoot.task.scheduled) : ""
                           placeholderText: root.tr("datesHint")
                           verticalPadding: Style.space(2)
+                          onActiveFocusChanged: root.formFocused = activeFocus
                         }
 
                         Text {
@@ -847,6 +852,7 @@ Panel {
                           text: rowRoot.task ? Model.formatShortDate(rowRoot.task.due) : ""
                           placeholderText: root.tr("datesHint")
                           verticalPadding: Style.space(2)
+                          onActiveFocusChanged: root.formFocused = activeFocus
                         }
 
                         Text {
