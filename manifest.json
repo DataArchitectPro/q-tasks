@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "id": "q.tasks",
+  "name": "Tasks",
+  "version": "1.0.0",
+  "author": "q",
+  "description": "Taskwarrior + Timewarrior panel: list, CRUD, projects, deps, timers",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Tasks",
+    "description": "Manage Taskwarrior tasks from the Omarchy bar",
+    "category": "Productivity",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "schema": [
+      {
+        "key": "showWhenEmpty",
+        "type": "boolean",
+        "label": "Show when empty",
+        "description": "Keep the tasks icon visible when there are no pending tasks",
+        "defaultValue": true
+      },
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 5,
+        "max": 3600,
+        "step": 5,
+        "defaultValue": 30
+      },
+      {
+        "key": "defaultFilter",
+        "type": "string",
+        "label": "Default filter",
+        "description": "all | active | today | done",
+        "defaultValue": "all"
+      },
+      {
+        "key": "defaultGroupBy",
+        "type": "string",
+        "label": "Default group by",
+        "description": "project | priority | due | status | none",
+        "defaultValue": "project"
+      }
+    ]
+  }
+}

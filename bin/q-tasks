@@ -1,0 +1,481 @@
+#!/usr/bin/env python3
+"""q.tasks helper — JSON bridge between Omarchy Quickshell UI and task/timew."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from datetime import datetime, timezone
+from typing import Any
+
+
+TW_RC = ["rc.verbose=nothing", "rc.color=off", "rc.confirmation=off", "rc.gc=0"]
+
+
+def which(name: str) -> bool:
+    return shutil.which(name) is not None
+
+
+def run(cmd: list[str], input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        cmd,
+        input=input_text,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def task_cmd(*args: str) -> subprocess.CompletedProcess[str]:
+    return run(["task", *TW_RC, *args])
+
+
+def ok_json(payload: dict[str, Any], code: int = 0) -> int:
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False))
+    sys.stdout.write("\n")
+    return code
+
+
+def err_json(message: str, code: int = 1, **extra: Any) -> int:
+    payload = {"ok": False, "error": message}
+    payload.update(extra)
+    return ok_json(payload, code)
+
+
+def parse_iso(ts: str | None) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        if ts.endswith("Z"):
+            return datetime.strptime(ts, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        return datetime.fromisoformat(ts)
+    except ValueError:
+        return None
+
+
+def seconds_between(start: str | None, end: str | None, now: datetime) -> int:
+    s = parse_iso(start)
+    if not s:
+        return 0
+    e = parse_iso(end) if end else now
+    if not e:
+        e = now
+    return max(0, int((e - s).total_seconds()))
+
+
+def format_duration(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
+
+
+def export_tasks() -> list[dict[str, Any]]:
+    # Prefer pending + completed (recent) + started; filter deleted out.
+    proc = task_cmd("export")
+    if proc.returncode != 0 and not proc.stdout.strip():
+        return []
+    try:
+        data = json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [t for t in data if isinstance(t, dict) and t.get("status") != "deleted"]
+
+
+def list_projects() -> list[str]:
+    proc = task_cmd("_projects")
+    if proc.returncode != 0:
+        return []
+    lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
+    return sorted(set(lines), key=str.casefold)
+
+
+def timew_active_and_today() -> tuple[dict[str, Any] | None, dict[str, int]]:
+    """Return (active interval summary, description->seconds today)."""
+    now = datetime.now(timezone.utc)
+    today: dict[str, int] = {}
+    active: dict[str, Any] | None = None
+
+    if not which("timew"):
+        return None, today
+
+    proc = run(["timew", "export", ":day"])
+    if proc.returncode != 0:
+        return None, today
+    try:
+        intervals = json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError:
+        return None, today
+
+    uuid_re = re.compile(
+        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        re.I,
+    )
+
+    for iv in intervals:
+        if not isinstance(iv, dict):
+            continue
+        tags = [str(t) for t in (iv.get("tags") or [])]
+        secs = seconds_between(iv.get("start"), iv.get("end"), now)
+        uuids = [t for t in tags if uuid_re.match(t)]
+        # Prefer UUID tags; also index by non-uuid tags (description/project).
+        keys = uuids if uuids else [t for t in tags if not uuid_re.match(t)]
+        for key in keys:
+            today[key] = today.get(key, 0) + secs
+        if not iv.get("end"):
+            active = {
+                "tags": tags,
+                "uuids": uuids,
+                "start": iv.get("start"),
+                "description": next((t for t in tags if not uuid_re.match(t) and t not in uuids), ""),
+            }
+
+    return active, today
+
+
+def normalize_task(raw: dict[str, Any], today: dict[str, int], active: dict[str, Any] | None) -> dict[str, Any]:
+    uuid = str(raw.get("uuid") or "")
+    desc = str(raw.get("description") or "")
+    project = str(raw.get("project") or "")
+    depends = raw.get("depends") or []
+    if isinstance(depends, str):
+        depends = [d for d in depends.replace(",", " ").split() if d]
+    elif not isinstance(depends, list):
+        depends = []
+
+    today_secs = 0
+    if uuid and uuid in today:
+        today_secs = today[uuid]
+    elif desc and desc in today:
+        today_secs = today[desc]
+    # If tagged with both project and description, timew sums may be on either.
+
+    # Source of truth is Taskwarrior's start attribute (timew can lag the hook).
+    timer_active = bool(raw.get("start"))
+
+    due = raw.get("due")
+    scheduled = raw.get("scheduled")
+    overdue = False
+    if due and raw.get("status") == "pending":
+        due_dt = parse_iso(str(due))
+        if due_dt and due_dt < datetime.now(timezone.utc):
+            overdue = True
+
+    return {
+        "id": int(raw.get("id") or 0),
+        "uuid": uuid,
+        "description": desc,
+        "status": str(raw.get("status") or ""),
+        "project": project,
+        "priority": str(raw.get("priority") or ""),
+        "scheduled": str(scheduled) if scheduled else "",
+        "due": str(due) if due else "",
+        "start": str(raw.get("start") or ""),
+        "end": str(raw.get("end") or ""),
+        "depends": [str(d) for d in depends],
+        "urgency": float(raw.get("urgency") or 0),
+        "tags": list(raw.get("tags") or []) if isinstance(raw.get("tags"), list) else [],
+        "timerActive": timer_active,
+        "todaySeconds": today_secs,
+        "todayLabel": format_duration(today_secs) if today_secs else "",
+        "overdue": overdue,
+        "blocked": bool(depends) and raw.get("status") == "pending",
+    }
+
+
+def cmd_export(_: argparse.Namespace) -> int:
+    available = which("task")
+    timew_available = which("timew")
+    if not available:
+        return ok_json(
+            {
+                "ok": True,
+                "available": False,
+                "timewAvailable": timew_available,
+                "tasks": [],
+                "projects": [],
+                "pending": 0,
+                "actionable": 0,
+                "active": None,
+                "label": "!",
+                "tooltip": "Taskwarrior is not installed",
+            }
+        )
+
+    active, today = timew_active_and_today()
+    raw_tasks = export_tasks()
+    tasks = [normalize_task(t, today, active) for t in raw_tasks]
+
+    # Resolve blocked: depends may be UUIDs; mark blocked if any dep not completed.
+    by_uuid = {t["uuid"]: t for t in tasks if t["uuid"]}
+    completed = {u for u, t in by_uuid.items() if t["status"] == "completed"}
+    for t in tasks:
+        deps = t["depends"]
+        if not deps:
+            t["blocked"] = False
+            t["blocking"] = False
+            continue
+        unresolved = [d for d in deps if d not in completed]
+        t["blocked"] = t["status"] == "pending" and len(unresolved) > 0
+        t["blocking"] = False
+
+    for t in tasks:
+        if t["status"] != "pending":
+            continue
+        for other in tasks:
+            if t["uuid"] and t["uuid"] in (other.get("depends") or []):
+                if other["status"] == "pending":
+                    t["blocking"] = True
+                    break
+
+    pending = [t for t in tasks if t["status"] == "pending"]
+    actionable = [
+        t
+        for t in pending
+        if t.get("overdue")
+        or (t.get("due") and parse_iso(t["due"]) and parse_iso(t["due"]).date() <= datetime.now(timezone.utc).date())
+    ]
+
+    active_desc = ""
+    active_uuid = ""
+    for t in pending:
+        if t["timerActive"]:
+            active_desc = t["description"]
+            active_uuid = t["uuid"]
+            break
+    if not active_desc and active:
+        active_desc = str(active.get("description") or "")
+        uu = active.get("uuids") or []
+        active_uuid = uu[0] if uu else ""
+
+    count = len(pending)
+    label_count = len(actionable) if actionable else count
+    icon = "\uf0ae"
+    label = f"{icon}  {label_count}" if count else icon
+
+    tooltip = active_desc if active_desc else (f"{count} pending" if count else "No pending tasks")
+
+    return ok_json(
+        {
+            "ok": True,
+            "available": True,
+            "timewAvailable": timew_available,
+            "tasks": tasks,
+            "projects": list_projects(),
+            "pending": count,
+            "actionable": len(actionable),
+            "active": {
+                "description": active_desc,
+                "uuid": active_uuid,
+            }
+            if active_desc or active_uuid
+            else None,
+            "label": label,
+            "tooltip": tooltip,
+        }
+    )
+
+
+def build_mods(args: argparse.Namespace) -> list[str]:
+    mods: list[str] = []
+    if getattr(args, "description", None):
+        mods.append(args.description)
+    if getattr(args, "project", None) is not None:
+        if args.project == "":
+            mods.append("project:")
+        else:
+            mods.append(f"project:{args.project}")
+    if getattr(args, "priority", None) is not None:
+        if args.priority == "":
+            mods.append("priority:")
+        else:
+            mods.append(f"priority:{args.priority}")
+    if getattr(args, "scheduled", None) is not None:
+        if args.scheduled == "":
+            mods.append("scheduled:")
+        else:
+            mods.append(f"scheduled:{args.scheduled}")
+    if getattr(args, "due", None) is not None:
+        if args.due == "":
+            mods.append("due:")
+        else:
+            mods.append(f"due:{args.due}")
+    return mods
+
+
+def mutate_and_export(proc: subprocess.CompletedProcess[str]) -> int:
+    if proc.returncode != 0:
+        msg = (proc.stderr or proc.stdout or "task command failed").strip()
+        return err_json(msg, code=1)
+    # Re-export snapshot for UI refresh convenience
+    ns = argparse.Namespace()
+    return cmd_export(ns)
+
+
+def cmd_add(args: argparse.Namespace) -> int:
+    if not args.description or not str(args.description).strip():
+        return err_json("description is required")
+    mods = build_mods(args)
+    # description is first positional for task add
+    desc = mods[0]
+    rest = mods[1:]
+    return mutate_and_export(task_cmd("add", *rest, "--", desc))
+
+
+def cmd_modify(args: argparse.Namespace) -> int:
+    if not args.uuid:
+        return err_json("uuid is required")
+    mods: list[str] = []
+    if args.description is not None and args.description != "":
+        mods.append(f"description:{args.description}")
+    # Reuse optional field builders without requiring description first
+    tmp = argparse.Namespace(
+        description=None,
+        project=args.project,
+        priority=args.priority,
+        scheduled=args.scheduled,
+        due=args.due,
+    )
+    mods.extend(build_mods(tmp))
+    if not mods:
+        return err_json("no modifications")
+    return mutate_and_export(task_cmd(args.uuid, "modify", *mods))
+
+
+def cmd_done(args: argparse.Namespace) -> int:
+    return mutate_and_export(task_cmd(args.uuid, "done"))
+
+
+def cmd_delete(args: argparse.Namespace) -> int:
+    return mutate_and_export(task_cmd(args.uuid, "delete"))
+
+
+def cmd_start(args: argparse.Namespace) -> int:
+    return mutate_and_export(task_cmd(args.uuid, "start"))
+
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    proc = task_cmd(args.uuid, "stop")
+    # Ensure Timewarrior closes even if the hook missed a race.
+    if which("timew"):
+        run(["timew", "stop", ":yes"])
+    return mutate_and_export(proc)
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    # pending | completed via done | waiting
+    st = args.status
+    if st == "completed" or st == "done":
+        return mutate_and_export(task_cmd(args.uuid, "done"))
+    if st == "pending":
+        return mutate_and_export(task_cmd(args.uuid, "modify", "status:pending"))
+    if st == "waiting":
+        wait = args.wait or "tomorrow"
+        return mutate_and_export(task_cmd(args.uuid, "modify", f"wait:{wait}"))
+    return err_json(f"unknown status: {st}")
+
+
+def cmd_deps(args: argparse.Namespace) -> int:
+    if not args.uuid:
+        return err_json("uuid is required")
+    if args.clear:
+        return mutate_and_export(task_cmd(args.uuid, "modify", "depends:"))
+    mods: list[str] = []
+    if args.add:
+        mods.append(f"depends:{args.add}")
+    if args.remove:
+        mods.append(f"depends:-{args.remove}")
+    if not mods:
+        return err_json("specify --add, --remove, or --clear")
+    return mutate_and_export(task_cmd(args.uuid, "modify", *mods))
+
+
+def cmd_projects(args: argparse.Namespace) -> int:
+    action = args.action
+    if action == "list":
+        return ok_json({"ok": True, "projects": list_projects()})
+    if action == "rename":
+        if not args.old or not args.new or ":" in args.new:
+            return err_json("old and new project names required (no colon)")
+        return mutate_and_export(
+            task_cmd(f"project:{args.old}", "modify", f"project:{args.new}")
+        )
+    if action == "clear":
+        if not args.old:
+            return err_json("project name required")
+        return mutate_and_export(task_cmd(f"project:{args.old}", "modify", "project:"))
+    return err_json(f"unknown projects action: {action}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="q-tasks")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("export")
+
+    p_add = sub.add_parser("add")
+    p_add.add_argument("--description", required=True)
+    p_add.add_argument("--project", default=None)
+    p_add.add_argument("--priority", default=None)
+    p_add.add_argument("--scheduled", default=None)
+    p_add.add_argument("--due", default=None)
+
+    p_mod = sub.add_parser("modify")
+    p_mod.add_argument("--uuid", required=True)
+    p_mod.add_argument("--description", default=None)
+    p_mod.add_argument("--project", default=None)
+    p_mod.add_argument("--priority", default=None)
+    p_mod.add_argument("--scheduled", default=None)
+    p_mod.add_argument("--due", default=None)
+
+    for name in ("done", "delete", "start", "stop"):
+        p = sub.add_parser(name)
+        p.add_argument("--uuid", required=True)
+
+    p_st = sub.add_parser("status")
+    p_st.add_argument("--uuid", required=True)
+    p_st.add_argument("--status", required=True)
+    p_st.add_argument("--wait", default=None)
+
+    p_deps = sub.add_parser("deps")
+    p_deps.add_argument("--uuid", required=True)
+    p_deps.add_argument("--add", default=None, help="dependency uuid or id")
+    p_deps.add_argument("--remove", default=None)
+    p_deps.add_argument("--clear", action="store_true")
+
+    p_proj = sub.add_parser("projects")
+    p_proj.add_argument("action", choices=["list", "rename", "clear"])
+    p_proj.add_argument("--old", default=None)
+    p_proj.add_argument("--new", default=None)
+
+    args = parser.parse_args()
+    handlers = {
+        "export": cmd_export,
+        "add": cmd_add,
+        "modify": cmd_modify,
+        "done": cmd_done,
+        "delete": cmd_delete,
+        "start": cmd_start,
+        "stop": cmd_stop,
+        "status": cmd_status,
+        "deps": cmd_deps,
+        "projects": cmd_projects,
+    }
+    return handlers[args.cmd](args)
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except Exception as exc:  # noqa: BLE001 — surface to QML
+        err_json(str(exc), code=1)
+        raise SystemExit(1)
