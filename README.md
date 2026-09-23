@@ -4,7 +4,19 @@
 
 Bar widget for [Omarchy](https://omarchy.org/) that brings **Taskwarrior** and **Timewarrior** into the shell panel. Create, edit, filter, and time-track tasks without leaving the desktop.
 
-![Task list](docs/screenshots/01-panel-list.png)
+![q.tasks panel](preview.png)
+
+## What this is
+
+`q.tasks` is a **GUI companion** for the classic CLI task stack — not a separate task database.
+
+| Component | Role |
+| --- | --- |
+| [Taskwarrior](https://taskwarrior.org/) (`task`) | Source of truth for tasks, projects, priorities, dates, dependencies, and status |
+| [Timewarrior](https://timewarrior.net/) (`timew`) | Time tracking: start/stop timers and today totals (optional but recommended) |
+| Omarchy shell | Host panel: this plugin talks to `task` / `timew` through a small local helper |
+
+Anything you do here is stored in your normal Taskwarrior / Timewarrior data. You can still use the same tasks from the terminal (`task`, `timew`) — the panel is an add-on UI on top of those tools.
 
 ## Features
 
