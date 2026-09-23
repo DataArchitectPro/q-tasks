@@ -59,18 +59,14 @@
 ## Требования
 
 - [Omarchy](https://omarchy.org/) Linux (Quickshell / система плагинов)
-- [Taskwarrior](https://taskwarrior.org/) (`task`)
-- [Timewarrior](https://timewarrior.net/) (`timew`) — желателен для таймеров; CRUD задач работает и без него
+- [Taskwarrior](https://taskwarrior.org/) (`task`) — пакет `task` из репозитория дистрибутива
+- [Timewarrior](https://timewarrior.net/) (`timew`) — желателен для таймеров; пакет `timew` из репозитория дистрибутива
 
-На системах на базе Arch:
-
-```bash
-sudo pacman -S task timew
-```
+Плагин сам системные пакеты не ставит. В Arch Linux пакеты называются `task` и `timew`.
 
 ## Установка (Linux / Omarchy)
 
-Через CLI плагинов Omarchy (предпочтительно):
+Предпочтительно — Omarchy сам клонирует и включает плагин:
 
 ```bash
 omarchy plugin add https://github.com/DataArchitectPro/q-tasks.git --enable --yes
@@ -88,10 +84,11 @@ omarchy bar move q.tasks --section right
 omarchy restart shell
 ```
 
-### Ручная установка
+### Checkout для разработки
+
+Для локальной разработки положите или клонируйте этот репозиторий в `~/.config/omarchy/plugins/q.tasks`, затем:
 
 ```bash
-git clone https://github.com/DataArchitectPro/q-tasks.git ~/.config/omarchy/plugins/q.tasks
 omarchy plugin enable q.tasks --section right
 omarchy restart shell
 ```

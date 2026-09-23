@@ -59,18 +59,14 @@ Switch to **Projects** to list projects, rename them, clear a project from all t
 ## Requirements
 
 - [Omarchy](https://omarchy.org/) Linux (Quickshell bar / plugin system)
-- [Taskwarrior](https://taskwarrior.org/) (`task`)
-- [Timewarrior](https://timewarrior.net/) (`timew`) — recommended for timers; the panel still works without it for task CRUD
+- [Taskwarrior](https://taskwarrior.org/) (`task`) — install the `task` package from your distro
+- [Timewarrior](https://timewarrior.net/) (`timew`) — optional but recommended for timers; install the `timew` package from your distro
 
-On Arch-based systems:
-
-```bash
-sudo pacman -S task timew
-```
+The plugin does not install system packages itself. On Arch Linux the package names are `task` and `timew`.
 
 ## Install (Linux / Omarchy)
 
-From the Omarchy plugin CLI (preferred):
+Preferred — Omarchy clones and enables the plugin for you:
 
 ```bash
 omarchy plugin add https://github.com/DataArchitectPro/q-tasks.git --enable --yes
@@ -88,10 +84,11 @@ Reload the shell if the icon does not appear:
 omarchy restart shell
 ```
 
-### Manual install
+### Developer checkout
+
+For local development, place or clone this repository at `~/.config/omarchy/plugins/q.tasks`, then:
 
 ```bash
-git clone https://github.com/DataArchitectPro/q-tasks.git ~/.config/omarchy/plugins/q.tasks
 omarchy plugin enable q.tasks --section right
 omarchy restart shell
 ```
