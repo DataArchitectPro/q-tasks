@@ -17,19 +17,54 @@ from typing import Any
 
 TW_RC = ["rc.verbose=nothing", "rc.color=off", "rc.confirmation=off", "rc.gc=0"]
 
+# Hard caps so a huge/synchronized TW DB cannot hang or OOM the long-lived shell.
+HELPER_TIMEOUT_SEC = 8.0
+MAX_STDOUT_BYTES = 1_500_000
+MAX_TASKS = 1500
+MAX_PROJECTS = 400
+MAX_DEPS_PER_TASK = 40
+MAX_TAGS_PER_TASK = 40
+MAX_STRING_LEN = 2000
+MAX_SHORT_STRING_LEN = 240
+MAX_PAYLOAD_BYTES = 1_800_000
+
 
 def which(name: str) -> bool:
     return shutil.which(name) is not None
 
 
-def run(cmd: list[str], input_text: str | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        cmd,
-        input=input_text,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+def clip_str(value: Any, max_len: int = MAX_STRING_LEN) -> str:
+    s = str(value or "")
+    if len(s) <= max_len:
+        return s
+    if max_len <= 1:
+        return s[:max_len]
+    return s[: max_len - 1] + "…"
+
+
+def run(
+    cmd: list[str],
+    input_text: str | None = None,
+    timeout: float = HELPER_TIMEOUT_SEC,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        proc = subprocess.run(
+            cmd,
+            input=input_text,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        out = exc.stdout if isinstance(exc.stdout, str) else ""
+        err = exc.stderr if isinstance(exc.stderr, str) else "timeout"
+        return subprocess.CompletedProcess(cmd, 124, out or "", err or "timeout")
+
+    stdout = proc.stdout or ""
+    if len(stdout.encode("utf-8", errors="replace")) > MAX_STDOUT_BYTES:
+        return subprocess.CompletedProcess(cmd, 125, "", "stdout exceeds size limit")
+    return proc
 
 
 def task_cmd(*args: str) -> subprocess.CompletedProcess[str]:
@@ -37,13 +72,44 @@ def task_cmd(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 def ok_json(payload: dict[str, Any], code: int = 0) -> int:
-    sys.stdout.write(json.dumps(payload, ensure_ascii=False))
+    raw = json.dumps(payload, ensure_ascii=False)
+    if len(raw.encode("utf-8", errors="replace")) > MAX_PAYLOAD_BYTES:
+        # Fail closed rather than pushing an oversized snapshot into QML.
+        raw = json.dumps(
+            {
+                "ok": False,
+                "error": "snapshot exceeds size limit",
+                "available": bool(payload.get("available", True)),
+                "timewAvailable": bool(payload.get("timewAvailable", False)),
+                "tasks": [],
+                "projects": [],
+                "pending": 0,
+                "actionable": 0,
+                "active": None,
+                "label": "!",
+                "tooltip": "Task snapshot too large",
+            },
+            ensure_ascii=False,
+        )
+        code = 1
+    sys.stdout.write(raw)
     sys.stdout.write("\n")
     return code
 
 
 def err_json(message: str, code: int = 1, **extra: Any) -> int:
-    payload = {"ok": False, "error": message}
+    payload: dict[str, Any] = {
+        "ok": False,
+        "error": clip_str(message, MAX_SHORT_STRING_LEN),
+        "available": True,
+        "tasks": [],
+        "projects": [],
+        "pending": 0,
+        "actionable": 0,
+        "active": None,
+        "label": "!",
+        "tooltip": clip_str(message, MAX_SHORT_STRING_LEN),
+    }
     payload.update(extra)
     return ok_json(payload, code)
 
@@ -144,7 +210,8 @@ def fmt_local(dt: datetime) -> str:
 
 
 def find_raw_task(uuid: str) -> dict[str, Any] | None:
-    for t in export_tasks():
+    tasks, _err = export_tasks()
+    for t in tasks:
         if str(t.get("uuid") or "") == uuid:
             return t
     return None
@@ -339,26 +406,34 @@ def task_timew_tags(raw: dict[str, Any]) -> list[str]:
     return [t for t in tags if t]
 
 
-def export_tasks() -> list[dict[str, Any]]:
+def export_tasks() -> tuple[list[dict[str, Any]], str | None]:
     # Prefer pending + completed (recent) + started; filter deleted out.
     proc = task_cmd("export")
-    if proc.returncode != 0 and not proc.stdout.strip():
-        return []
+    if proc.returncode == 124:
+        return [], "task export timed out"
+    if proc.returncode == 125:
+        return [], "task export output too large"
+    if proc.returncode != 0 and not (proc.stdout or "").strip():
+        return [], None
     try:
         data = json.loads(proc.stdout or "[]")
     except json.JSONDecodeError:
-        return []
+        return [], "task export returned invalid JSON"
     if not isinstance(data, list):
-        return []
-    return [t for t in data if isinstance(t, dict) and t.get("status") != "deleted"]
+        return [], "task export returned unexpected shape"
+    tasks = [t for t in data if isinstance(t, dict) and t.get("status") != "deleted"]
+    if len(tasks) > MAX_TASKS:
+        return [], f"too many tasks ({len(tasks)} > {MAX_TASKS})"
+    return tasks, None
 
 
 def list_projects() -> list[str]:
     proc = task_cmd("_projects")
-    if proc.returncode != 0:
+    if proc.returncode in (124, 125) or proc.returncode != 0:
         return []
-    lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
-    return sorted(set(lines), key=str.casefold)
+    lines = [clip_str(ln.strip(), MAX_SHORT_STRING_LEN) for ln in (proc.stdout or "").splitlines() if ln.strip()]
+    uniq = sorted(set(lines), key=str.casefold)
+    return uniq[:MAX_PROJECTS]
 
 
 EXTRA_PROJECTS_PATH = Path.home() / ".local" / "share" / "q.tasks" / "extra-projects.json"
@@ -592,22 +667,30 @@ def all_projects() -> list[str]:
     return sorted(tw | set(keep), key=str.casefold)
 
 
-def timew_active_and_today() -> tuple[dict[str, Any] | None, dict[str, int]]:
-    """Return (active interval summary, description->seconds today)."""
+def timew_active_and_today() -> tuple[dict[str, Any] | None, dict[str, int], str | None]:
+    """Return (active interval summary, description->seconds today, error)."""
     now = datetime.now(timezone.utc)
     today: dict[str, int] = {}
     active: dict[str, Any] | None = None
 
     if not which("timew"):
-        return None, today
+        return None, today, None
 
     proc = run(["timew", "export", ":day"])
+    if proc.returncode == 124:
+        return None, today, "timew export timed out"
+    if proc.returncode == 125:
+        return None, today, "timew export output too large"
     if proc.returncode != 0:
-        return None, today
+        return None, today, None
     try:
         intervals = json.loads(proc.stdout or "[]")
     except json.JSONDecodeError:
-        return None, today
+        return None, today, "timew export returned invalid JSON"
+    if not isinstance(intervals, list):
+        return None, today, "timew export returned unexpected shape"
+    if len(intervals) > MAX_TASKS:
+        return None, today, f"too many timew intervals ({len(intervals)} > {MAX_TASKS})"
 
     uuid_re = re.compile(
         r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -617,7 +700,7 @@ def timew_active_and_today() -> tuple[dict[str, Any] | None, dict[str, int]]:
     for iv in intervals:
         if not isinstance(iv, dict):
             continue
-        tags = [str(t) for t in (iv.get("tags") or [])]
+        tags = [clip_str(t, MAX_SHORT_STRING_LEN) for t in (iv.get("tags") or [])][:MAX_TAGS_PER_TASK]
         secs = seconds_between(iv.get("start"), iv.get("end"), now)
         uuids = [t for t in tags if uuid_re.match(t)]
         # Prefer UUID tags; also index by non-uuid tags (description/project).
@@ -629,21 +712,25 @@ def timew_active_and_today() -> tuple[dict[str, Any] | None, dict[str, int]]:
                 "tags": tags,
                 "uuids": uuids,
                 "start": iv.get("start"),
-                "description": next((t for t in tags if not uuid_re.match(t) and t not in uuids), ""),
+                "description": next(
+                    (t for t in tags if not uuid_re.match(t) and t not in uuids),
+                    "",
+                ),
             }
 
-    return active, today
+    return active, today, None
 
 
 def normalize_task(raw: dict[str, Any], today: dict[str, int], active: dict[str, Any] | None) -> dict[str, Any]:
-    uuid = str(raw.get("uuid") or "")
-    desc = str(raw.get("description") or "")
-    project = str(raw.get("project") or "")
+    uuid = clip_str(raw.get("uuid") or "", 64)
+    desc = clip_str(raw.get("description") or "", MAX_STRING_LEN)
+    project = clip_str(raw.get("project") or "", MAX_SHORT_STRING_LEN)
     depends = raw.get("depends") or []
     if isinstance(depends, str):
         depends = [d for d in depends.replace(",", " ").split() if d]
     elif not isinstance(depends, list):
         depends = []
+    depends = [clip_str(d, 64) for d in depends][:MAX_DEPS_PER_TASK]
 
     today_secs = 0
     if uuid and uuid in today:
@@ -674,25 +761,30 @@ def normalize_task(raw: dict[str, Any], today: dict[str, int], active: dict[str,
         if due_dt and due_dt < datetime.now(timezone.utc):
             overdue = True
 
+    tags_raw = raw.get("tags") or []
+    if not isinstance(tags_raw, list):
+        tags_raw = []
+    tags = [clip_str(t, MAX_SHORT_STRING_LEN) for t in tags_raw][:MAX_TAGS_PER_TASK]
+
     return {
         "id": int(raw.get("id") or 0),
         "uuid": uuid,
         "description": desc,
-        "status": status,
+        "status": clip_str(status, 32),
         "project": project,
-        "priority": str(raw.get("priority") or ""),
-        "scheduled": str(scheduled) if scheduled else "",
-        "due": str(due) if due else "",
-        "wait": str(wait) if wait else "",
-        "waitingFor": str(raw.get("waitingfor") or ""),
-        "outcome": str(raw.get("outcome") or ""),
-        "details": str(raw.get("details") or ""),
-        "start": str(raw.get("start") or ""),
-        "end": str(raw.get("end") or ""),
-        "depends": [str(d) for d in depends],
+        "priority": clip_str(raw.get("priority") or "", 8),
+        "scheduled": clip_str(scheduled, 32) if scheduled else "",
+        "due": clip_str(due, 32) if due else "",
+        "wait": clip_str(wait, 32) if wait else "",
+        "waitingFor": clip_str(raw.get("waitingfor") or "", MAX_SHORT_STRING_LEN),
+        "outcome": clip_str(raw.get("outcome") or "", MAX_STRING_LEN),
+        "details": clip_str(raw.get("details") or "", MAX_STRING_LEN),
+        "start": clip_str(raw.get("start") or "", 32),
+        "end": clip_str(raw.get("end") or "", 32),
+        "depends": depends,
         "blocks": [],
         "urgency": float(raw.get("urgency") or 0),
-        "tags": list(raw.get("tags") or []) if isinstance(raw.get("tags"), list) else [],
+        "tags": tags,
         "timerActive": timer_active,
         "todaySeconds": today_secs,
         "todayLabel": format_duration(today_secs) if today_secs else "",
@@ -722,8 +814,14 @@ def cmd_export(_: argparse.Namespace, extra: dict | None = None) -> int:
             payload.update(extra)
         return ok_json(payload)
 
-    active, today = timew_active_and_today()
-    raw_tasks = export_tasks()
+    active, today, tw_err = timew_active_and_today()
+    if tw_err:
+        return err_json(tw_err, timewAvailable=timew_available)
+
+    raw_tasks, export_err = export_tasks()
+    if export_err:
+        return err_json(export_err, timewAvailable=timew_available)
+
     tasks = [normalize_task(t, today, active) for t in raw_tasks]
 
     # Resolve dependency graph both ways:
@@ -765,9 +863,9 @@ def cmd_export(_: argparse.Namespace, extra: dict | None = None) -> int:
             active_uuid = t["uuid"]
             break
     if not active_desc and active:
-        active_desc = str(active.get("description") or "")
+        active_desc = clip_str(active.get("description") or "", MAX_SHORT_STRING_LEN)
         uu = active.get("uuids") or []
-        active_uuid = uu[0] if uu else ""
+        active_uuid = clip_str(uu[0] if uu else "", 64)
 
     count = len(pending)
     label_count = len(actionable) if actionable else count
@@ -781,7 +879,7 @@ def cmd_export(_: argparse.Namespace, extra: dict | None = None) -> int:
         "available": True,
         "timewAvailable": timew_available,
         "tasks": tasks,
-        "projects": all_projects(),
+        "projects": all_projects()[:MAX_PROJECTS],
         "pending": count,
         "actionable": len(actionable),
         "active": {
@@ -791,7 +889,7 @@ def cmd_export(_: argparse.Namespace, extra: dict | None = None) -> int:
         if active_desc or active_uuid
         else None,
         "label": label,
-        "tooltip": tooltip,
+        "tooltip": clip_str(tooltip, MAX_SHORT_STRING_LEN),
     }
     if extra:
         payload.update(extra)
@@ -891,12 +989,17 @@ def cmd_add(args: argparse.Namespace) -> int:
         pass
     else:
         return err_json("status must be waiting, pending, or completed")
-    before = {str(t.get("uuid") or "") for t in export_tasks()}
+    before_tasks, before_err = export_tasks()
+    if before_err:
+        return err_json(before_err)
+    before = {str(t.get("uuid") or "") for t in before_tasks}
     proc = task_cmd("add", *rest, "--", desc)
     if proc.returncode != 0:
         return mutate_and_export(proc)
 
-    after = export_tasks()
+    after, after_err = export_tasks()
+    if after_err:
+        return err_json(after_err)
     new_uuid = ""
     for t in after:
         u = str(t.get("uuid") or "")

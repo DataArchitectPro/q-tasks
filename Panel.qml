@@ -531,9 +531,19 @@ Panel {
     return false
   }
 
+  // Mirror helper MAX_PAYLOAD_BYTES so QML never keeps an oversized snapshot.
+  readonly property int maxSnapshotChars: 1800000
+
   function applyData(text) {
     try {
-      var data = JSON.parse(String(text || "{}"))
+      var raw = String(text || "")
+      if (raw.length > root.maxSnapshotChars) {
+        root.lastError = "snapshot exceeds size limit"
+        root.dlog("snapshot.reject", { bytes: raw.length })
+        root.editGuard = false
+        return
+      }
+      var data = JSON.parse(raw || "{}")
       var reseedUuid = root.pendingEditorReseedUuid
       root.pendingEditorReseedUuid = ""
       if (listView)
@@ -1028,8 +1038,14 @@ Panel {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        root.dlog("export.done", { bytes: String(text || "").length })
-        root.applyData(text)
+        var bytes = String(text || "").length
+        root.dlog("export.done", { bytes: bytes })
+        if (bytes > root.maxSnapshotChars) {
+          root.lastError = "snapshot exceeds size limit"
+          root.dlog("export.reject", { bytes: bytes })
+        } else {
+          root.applyData(text)
+        }
         Qt.callLater(root._drainCmdQueue)
       }
     }
@@ -1045,9 +1061,15 @@ Panel {
       waitForEnd: true
       onStreamFinished: {
         var ms = root._cmdStartedAt ? (Date.now() - root._cmdStartedAt) : -1
-        root.dlog("cmd.done", { ms: ms, bytes: String(text || "").length })
+        var bytes = String(text || "").length
+        root.dlog("cmd.done", { ms: ms, bytes: bytes })
         root.busyUuid = ""
-        root.applyData(text)
+        if (bytes > root.maxSnapshotChars) {
+          root.lastError = "snapshot exceeds size limit"
+          root.dlog("cmd.reject", { bytes: bytes })
+        } else {
+          root.applyData(text)
+        }
         Qt.callLater(root._drainCmdQueue)
       }
     }
@@ -1185,6 +1207,7 @@ Panel {
             spacing: Style.space(8)
 
             Text {
+              textFormat: Text.PlainText
               text: root.tasksHeaderTitle
               color: root.foreground
               font.family: root.fontFamily
@@ -1194,6 +1217,7 @@ Panel {
             }
 
             Text {
+              textFormat: Text.PlainText
               text: String(root.snapshot.pending || 0)
               color: root.dim
               font.family: root.fontFamily
@@ -1242,6 +1266,7 @@ Panel {
         }
 
         Text {
+          textFormat: Text.PlainText
           visible: root.lastError !== ""
           Layout.fillWidth: true
           text: root.lastError
@@ -1318,6 +1343,7 @@ Panel {
                 spacing: Style.space(6)
 
                 Text {
+                  textFormat: Text.PlainText
                   text: root.tr("groupBy")
                   color: root.dim
                   font.family: root.fontFamily
@@ -1365,6 +1391,7 @@ Panel {
                 Layout.fillWidth: true
                 spacing: Style.space(2)
                 Text {
+                  textFormat: Text.PlainText
                   text: root.tr("filterStatus")
                   color: root.filterStatusActive ? root.filterActiveColor : root.filterIdleLabelColor
                   font.family: root.fontFamily
@@ -1405,6 +1432,7 @@ Panel {
                 Layout.fillWidth: true
                 spacing: Style.space(2)
                 Text {
+                  textFormat: Text.PlainText
                   text: root.tr("filterProject")
                   color: root.filterProjectActive ? root.filterActiveColor : root.filterIdleLabelColor
                   font.family: root.fontFamily
@@ -1441,6 +1469,7 @@ Panel {
                 Layout.fillWidth: true
                 spacing: Style.space(2)
                 Text {
+                  textFormat: Text.PlainText
                   text: root.tr("priority")
                   color: root.filterPriorityActive ? root.filterActiveColor : root.filterIdleLabelColor
                   font.family: root.fontFamily
@@ -1480,6 +1509,7 @@ Panel {
                 Layout.fillWidth: true
                 spacing: Style.space(2)
                 Text {
+                  textFormat: Text.PlainText
                   text: root.tr("filterDue")
                   color: root.filterDueActive ? root.filterActiveColor : root.filterIdleLabelColor
                   font.family: root.fontFamily
@@ -1521,6 +1551,7 @@ Panel {
                 Layout.fillWidth: true
                 spacing: Style.space(2)
                 Text {
+                  textFormat: Text.PlainText
                   text: root.tr("filterTimer")
                   color: root.filterTimerActive ? root.filterActiveColor : root.filterIdleLabelColor
                   font.family: root.fontFamily
@@ -1558,6 +1589,7 @@ Panel {
                 Layout.fillWidth: true
                 spacing: Style.space(2)
                 Text {
+                  textFormat: Text.PlainText
                   text: root.tr("filterDeps")
                   color: root.filterBlockedActive ? root.filterActiveColor : root.filterIdleLabelColor
                   font.family: root.fontFamily
@@ -1595,6 +1627,7 @@ Panel {
                 Layout.columnSpan: 2
                 spacing: Style.space(2)
                 Text {
+                  textFormat: Text.PlainText
                   text: root.tr("filterSearch")
                   color: root.filterSearchActive ? root.filterActiveColor : root.filterIdleLabelColor
                   font.family: root.fontFamily
@@ -1925,6 +1958,7 @@ Panel {
 
                         // Collapsed: plain title. Expanded: same slot becomes the editor.
                         Text {
+                          textFormat: Text.PlainText
                           visible: !rowRoot.expanded
                           width: parent.width
                           text: {
@@ -1962,6 +1996,7 @@ Panel {
                           visible: !rowRoot.expanded
                           spacing: Style.space(6)
                           Text {
+                            textFormat: Text.PlainText
                             visible: !!(rowRoot.task && rowRoot.task.project)
                             text: rowRoot.task ? rowRoot.task.project : ""
                             color: root.dim
@@ -1969,6 +2004,7 @@ Panel {
                             font.pixelSize: Style.font.caption
                           }
                           Text {
+                            textFormat: Text.PlainText
                             visible: !!(rowRoot.task && rowRoot.task.priority)
                             text: rowRoot.task ? rowRoot.task.priority : ""
                             color: root.foreground
@@ -1977,6 +2013,7 @@ Panel {
                             font.bold: true
                           }
                           Text {
+                            textFormat: Text.PlainText
                             visible: !!(rowRoot.task && (rowRoot.task.scheduled || rowRoot.task.due))
                             text: rowRoot.task ? Model.dateRangeLabel(rowRoot.task) : ""
                             color: rowRoot.task && rowRoot.task.overdue ? root.urgent : root.dim
@@ -1984,6 +2021,7 @@ Panel {
                             font.pixelSize: Style.font.caption
                           }
                           Text {
+                            textFormat: Text.PlainText
                             visible: !!(rowRoot.task && rowRoot.task.blocked)
                             text: root.tr("blocked")
                             color: root.urgent
@@ -1991,6 +2029,7 @@ Panel {
                             font.pixelSize: Style.font.caption
                           }
                           Text {
+                            textFormat: Text.PlainText
                             visible: !!(rowRoot.task && rowRoot.task.blocking)
                             text: root.tr("blocking")
                             color: root.dim
@@ -1998,6 +2037,7 @@ Panel {
                             font.pixelSize: Style.font.caption
                           }
                           Text {
+                            textFormat: Text.PlainText
                             visible: !!(rowRoot.task && rowRoot.task.status === "waiting" && rowRoot.task.waitingFor)
                             text: root.tr("waitingFor") + ": " + (rowRoot.task ? rowRoot.task.waitingFor : "")
                             color: root.dim
@@ -2007,6 +2047,7 @@ Panel {
                             width: Style.space(140)
                           }
                           Text {
+                            textFormat: Text.PlainText
                             visible: !!(rowRoot.task && rowRoot.task.status === "completed" && rowRoot.task.outcome)
                             text: root.tr("outcome") + ": " + (rowRoot.task ? rowRoot.task.outcome : "")
                             color: root.dim
@@ -2016,6 +2057,7 @@ Panel {
                             width: Style.space(140)
                           }
                           Text {
+                            textFormat: Text.PlainText
                             visible: !!(rowRoot.task && rowRoot.task.todayLabel)
                             text: root.tr("todayTime") + " " + (rowRoot.task ? rowRoot.task.todayLabel : "")
                             color: root.dim
@@ -2054,6 +2096,7 @@ Panel {
                       spacing: Style.space(4)
 
                       Text {
+                        textFormat: Text.PlainText
                         text: root.tr("details")
                         color: root.dim
                         font.family: root.fontFamily
@@ -2079,6 +2122,7 @@ Panel {
                           ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                           TextArea {
+                            textFormat: Text.PlainText
                             id: editDetailsArea
                             width: editDetailsBox.width - Style.space(12)
                             wrapMode: TextArea.Wrap
@@ -2102,6 +2146,7 @@ Panel {
                       spacing: Style.space(4)
 
                       Text {
+                        textFormat: Text.PlainText
                         text: root.tr("editSectionPlan")
                         color: root.dim
                         font.family: root.fontFamily
@@ -2110,6 +2155,7 @@ Panel {
                       }
 
                       Text {
+                        textFormat: Text.PlainText
                         text: root.tr("status")
                         color: root.dim
                         font.family: root.fontFamily
@@ -2164,6 +2210,7 @@ Panel {
                         spacing: Style.space(4)
 
                         Text {
+                          textFormat: Text.PlainText
                           text: root.tr("waitingFor")
                           color: root.dim
                           font.family: root.fontFamily
@@ -2200,6 +2247,7 @@ Panel {
                         spacing: Style.space(4)
 
                         Text {
+                          textFormat: Text.PlainText
                           text: root.tr("outcome")
                           color: root.dim
                           font.family: root.fontFamily
@@ -2239,6 +2287,7 @@ Panel {
                           spacing: Style.space(4)
 
                           Text {
+                            textFormat: Text.PlainText
                             text: root.tr("priority")
                             color: root.dim
                             font.family: root.fontFamily
@@ -2265,6 +2314,7 @@ Panel {
                           spacing: Style.space(4)
 
                           Text {
+                            textFormat: Text.PlainText
                             text: root.tr("project")
                             color: root.dim
                             font.family: root.fontFamily
@@ -2322,6 +2372,7 @@ Panel {
                       spacing: Style.space(4)
 
                       Text {
+                        textFormat: Text.PlainText
                         text: root.tr("editSectionSchedule")
                         color: root.dim
                         font.family: root.fontFamily
@@ -2336,6 +2387,7 @@ Panel {
                         rowSpacing: Style.space(4)
 
                         Text {
+                          textFormat: Text.PlainText
                           text: root.tr("startDate")
                           color: root.dim
                           font.family: root.fontFamily
@@ -2362,6 +2414,7 @@ Panel {
                         }
 
                         Text {
+                          textFormat: Text.PlainText
                           text: root.tr("endDate")
                           color: root.dim
                           font.family: root.fontFamily
@@ -2395,6 +2448,7 @@ Panel {
                       spacing: Style.space(4)
 
                       Text {
+                        textFormat: Text.PlainText
                         text: root.tr("editSectionLinks")
                         color: root.dim
                         font.family: root.fontFamily
@@ -2408,6 +2462,7 @@ Panel {
                         spacing: Style.space(2)
 
                         Text {
+                          textFormat: Text.PlainText
                           text: root.tr("depends")
                           color: root.dim
                           font.family: root.fontFamily
@@ -2423,6 +2478,7 @@ Panel {
                             spacing: Style.space(6)
                             width: parent.width
                             Text {
+                              textFormat: Text.PlainText
                               text: {
                                 var _ = root.dataRev
                                 var dep = Model.findTask(root.snapshot.tasks || [], parent.depId)
@@ -2462,6 +2518,7 @@ Panel {
                         spacing: Style.space(2)
 
                         Text {
+                          textFormat: Text.PlainText
                           text: root.tr("blocks")
                           color: root.dim
                           font.family: root.fontFamily
@@ -2476,6 +2533,7 @@ Panel {
                             spacing: Style.space(6)
                             width: parent.width
                             Text {
+                              textFormat: Text.PlainText
                               text: {
                                 var _ = root.dataRev
                                 var other = Model.findTask(root.snapshot.tasks || [], parent.otherUuid)
@@ -2530,6 +2588,7 @@ Panel {
                         }
 
                         Text {
+                          textFormat: Text.PlainText
                           id: noDepHint
                           visible: parent.depOptions.length <= 1
                           width: parent.width
@@ -2573,6 +2632,7 @@ Panel {
                       spacing: Style.space(4)
 
                       Text {
+                        textFormat: Text.PlainText
                         text: root.tr("editSectionTime") + (
                           rowRoot.task && rowRoot.task.todayLabel
                             ? (" — " + root.tr("todayTime") + " " + rowRoot.task.todayLabel)
@@ -2666,6 +2726,7 @@ Panel {
                         }
 
                         Text {
+                          textFormat: Text.PlainText
                           id: saveIdle
                           visible: !root.editDirty
                           anchors.centerIn: parent
@@ -2715,6 +2776,7 @@ Panel {
             }
 
             Text {
+              textFormat: Text.PlainText
               anchors.centerIn: parent
               visible: root.rows.length === 0
               text: root.snapshot.available === false ? root.tr("missingTaskwarrior") : root.tr("noTasks")
@@ -2811,6 +2873,7 @@ Panel {
                   }
 
                   Text {
+                    textFormat: Text.PlainText
                     id: addIdle
                     visible: !parent.parent.canAdd
                     anchors.centerIn: parent
@@ -2856,6 +2919,7 @@ Panel {
                   spacing: Style.space(6)
 
             Text {
+              textFormat: Text.PlainText
               text: root.tr("details")
               color: root.dim
               font.family: root.fontFamily
@@ -2881,6 +2945,7 @@ Panel {
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                 TextArea {
+                  textFormat: Text.PlainText
                   id: addDetailsField
                   width: addDetailsBox.width - Style.space(12)
                   wrapMode: TextArea.Wrap
@@ -2897,6 +2962,7 @@ Panel {
             }
 
             Text {
+              textFormat: Text.PlainText
               text: root.tr("editSectionPlan")
               color: root.dim
               font.family: root.fontFamily
@@ -2905,6 +2971,7 @@ Panel {
             }
 
             Text {
+              textFormat: Text.PlainText
               text: root.tr("status")
               color: root.dim
               font.family: root.fontFamily
@@ -2950,6 +3017,7 @@ Panel {
               spacing: Style.space(4)
 
               Text {
+                textFormat: Text.PlainText
                 text: root.tr("waitingFor")
                 color: root.dim
                 font.family: root.fontFamily
@@ -2971,6 +3039,7 @@ Panel {
               spacing: Style.space(4)
 
               Text {
+                textFormat: Text.PlainText
                 text: root.tr("outcome")
                 color: root.dim
                 font.family: root.fontFamily
@@ -2995,6 +3064,7 @@ Panel {
                 spacing: Style.space(4)
 
                 Text {
+                  textFormat: Text.PlainText
                   text: root.tr("priority")
                   color: root.dim
                   font.family: root.fontFamily
@@ -3020,6 +3090,7 @@ Panel {
                 spacing: Style.space(4)
 
                 Text {
+                  textFormat: Text.PlainText
                   text: root.tr("project")
                   color: root.dim
                   font.family: root.fontFamily
@@ -3059,6 +3130,7 @@ Panel {
               spacing: Style.space(8)
 
               Text {
+                textFormat: Text.PlainText
                 text: root.tr("editSectionSchedule")
                 color: root.dim
                 font.family: root.fontFamily
@@ -3072,6 +3144,7 @@ Panel {
                 rowSpacing: Style.space(4)
 
                 Text {
+                  textFormat: Text.PlainText
                   text: root.tr("startDate")
                   color: root.dim
                   font.family: root.fontFamily
@@ -3091,6 +3164,7 @@ Panel {
                 }
 
                 Text {
+                  textFormat: Text.PlainText
                   text: root.tr("endDate")
                   color: root.dim
                   font.family: root.fontFamily
@@ -3111,6 +3185,7 @@ Panel {
               }
 
               Text {
+                textFormat: Text.PlainText
                 text: root.tr("editSectionLinks")
                 color: root.dim
                 font.family: root.fontFamily
@@ -3131,6 +3206,7 @@ Panel {
                     width: parent.width
                     spacing: Style.space(6)
                     Text {
+                      textFormat: Text.PlainText
                       text: {
                         var dep = Model.findTask(root.snapshot.tasks || [], parent.depId)
                         if (!dep) return parent.depId
@@ -3175,6 +3251,7 @@ Panel {
                 }
 
                 Text {
+                  textFormat: Text.PlainText
                   id: addNoDepHint
                   visible: parent.depOptions.length <= 1
                   width: parent.width
@@ -3207,6 +3284,7 @@ Panel {
                 spacing: Style.space(4)
 
                 Text {
+                  textFormat: Text.PlainText
                   text: root.tr("editSectionTime")
                   color: root.dim
                   font.family: root.fontFamily
@@ -3321,6 +3399,7 @@ Panel {
             }
 
             Text {
+              textFormat: Text.PlainText
               anchors.centerIn: parent
               visible: root.projectList.length === 0
               text: root.tr("noProjects")
@@ -3394,6 +3473,7 @@ Panel {
             spacing: Style.space(16)
 
             Text {
+              textFormat: Text.PlainText
               width: parent.width
               text: root.tr("aboutTitle")
               color: root.foreground
@@ -3409,6 +3489,7 @@ Panel {
               spacing: Style.space(6)
 
               Text {
+                textFormat: Text.PlainText
                 width: parent.width
                 text: root.tr("aboutVersion") + ": " + root.pluginVersion
                 color: root.dim
@@ -3418,6 +3499,7 @@ Panel {
               }
 
               Text {
+                textFormat: Text.PlainText
                 width: parent.width
                 text: root.tr("aboutDeveloper") + ": " + root.tr("aboutDeveloperName")
                 color: root.foreground
@@ -3427,6 +3509,7 @@ Panel {
               }
 
               Text {
+                textFormat: Text.PlainText
                 width: parent.width
                 text: root.tr("aboutGithub") + ": " + root.githubUrl
                 color: Color.accent
@@ -3449,6 +3532,7 @@ Panel {
                 spacing: Style.space(6)
 
                 Text {
+                  textFormat: Text.PlainText
                   width: parent.width
                   text: root.tr("uiLanguage")
                   color: root.dim
@@ -3508,6 +3592,7 @@ Panel {
             }
 
             Text {
+              textFormat: Text.PlainText
               width: parent.width
               text: root.tr("debugLogHint")
               color: root.dim
@@ -3609,6 +3694,7 @@ Panel {
               spacing: Style.space(20)
 
               Text {
+                textFormat: Text.PlainText
                 id: msg
                 width: parent.width
                 text: root.tr("unsavedChanges")
@@ -3649,6 +3735,7 @@ Panel {
                     radius: 0
 
                     Text {
+                      textFormat: Text.PlainText
                       id: labelText
                       anchors.centerIn: parent
                       text: modelData.label

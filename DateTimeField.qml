@@ -197,6 +197,7 @@ Item {
         }
 
         Text {
+          textFormat: Text.PlainText
           width: parent.width - Style.space(80)
           text: root.monthTitle
           color: root.foreground
@@ -228,6 +229,7 @@ Item {
         Repeater {
           model: root.weekdayLabels
           Text {
+            textFormat: Text.PlainText
             required property string modelData
             width: parent.width / 7
             text: modelData
@@ -265,6 +267,7 @@ Item {
               border.color: root.accent
 
               Text {
+                textFormat: Text.PlainText
                 anchors.centerIn: parent
                 text: modelData.inMonth ? String(modelData.day) : ""
                 color: modelData.selected ? root.accent : root.foreground
@@ -292,6 +295,7 @@ Item {
         spacing: Style.space(6)
 
         Text {
+          textFormat: Text.PlainText
           text: root.trTime
           color: Qt.darker(root.foreground, 1.4)
           font.family: root.fontFamily
@@ -315,6 +319,7 @@ Item {
         }
 
         Text {
+          textFormat: Text.PlainText
           text: ":"
           color: root.foreground
           font.family: root.fontFamily
