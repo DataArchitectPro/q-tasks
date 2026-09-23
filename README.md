@@ -14,7 +14,29 @@ Bar widget for [Omarchy](https://omarchy.org/) that brings **Taskwarrior** and *
 - **i18n**: English and Russian UI (follows system locale)
 - **About** dialog with version, developer info, GitHub link, and debug logging toggle
 
+### Filter & search
+
+Expand **Filter** to narrow by status, project, priority, due, timer, and dependencies, plus a free-text search over descriptions.
+
+![Advanced filter](docs/screenshots/04-filter.png)
+
+### New task composer
+
+The sticky composer at the bottom expands into the same field layout as the editor: details, status, waiting-for, priority, project, and optional schedule / deps / time.
+
+![New task form](docs/screenshots/05-new-task.png)
+
+### Task editor
+
+Click a task to edit it in place. Save when dirty, Cancel to collapse, or Delete.
+
 ![Task editor](docs/screenshots/02-panel-edit.png)
+
+### Projects
+
+Switch to **Projects** to list projects, rename them, clear a project from all tasks, or add a new one.
+
+![Projects view](docs/screenshots/06-projects.png)
 
 ## Requirements
 
@@ -79,9 +101,10 @@ Saved files under `~/.config/omarchy/plugins/` are hot-reloaded by the shell; a 
 
 1. Left-click the tasks icon on the bar to open the panel.
 2. Use **Tasks** / **Projects** in the header to switch views.
-3. Click a task to expand the editor; **Save**, **Cancel**, or **Delete** at the bottom of the card.
-4. Use the composer at the bottom to add a new task.
-5. Open **About** (`О плагине`) in the header for version info, GitHub, and debug logging.
+3. Expand **Filter** when you need status / project / priority / due / timer / deps or search.
+4. Click a task to expand the editor; **Save**, **Cancel**, or **Delete** at the bottom of the card.
+5. Focus the composer at the bottom to add a new task with the full form.
+6. Open **About** (`О плагине`) in the header for version info, GitHub, and debug logging.
 
 ![About & debug](docs/screenshots/03-about.png)
 
