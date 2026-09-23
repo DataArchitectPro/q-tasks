@@ -1,5 +1,7 @@
 # q.tasks
 
+**English** · [Русский](README.ru.md)
+
 Bar widget for [Omarchy](https://omarchy.org/) that brings **Taskwarrior** and **Timewarrior** into the shell panel. Create, edit, filter, and time-track tasks without leaving the desktop.
 
 ![Task list](docs/screenshots/01-panel-list.png)
