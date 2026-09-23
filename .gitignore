@@ -3,3 +3,19 @@ __pycache__/
 *.swp
 *~
 .DS_Store
+
+# Secrets / local env
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+secrets.json
+auth.json
+
+# Local Taskwarrior / Timewarrior data must never be published
+*.task
+taskrc.local
+.task/
+.timewarrior/

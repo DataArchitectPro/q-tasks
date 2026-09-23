@@ -25,6 +25,21 @@ function formatShortDate(s, localeName) {
   }
 }
 
+function pad2(n) {
+  n = Number(n) || 0
+  return (n < 10 ? "0" : "") + n
+}
+
+function formatEditableDateTime(s) {
+  var d = parseTwDate(s)
+  if (!d) return ""
+  var ymd = formatShortDate(s)
+  var h = d.getHours()
+  var m = d.getMinutes()
+  if (h === 0 && m === 0) return ymd
+  return ymd + "T" + pad2(h) + ":" + pad2(m)
+}
+
 function dateRangeLabel(task) {
   var a = formatShortDate(task.scheduled)
   var b = formatShortDate(task.due)
@@ -57,7 +72,9 @@ function dueBucket(task) {
 }
 
 function matchesFilter(task, filter) {
+  // Legacy simple filters kept for compatibility
   if (!task) return false
+  if (!filter || filter === "pass") return true
   if (filter === "all") return task.status === "pending" || task.status === "waiting"
   if (filter === "active") return task.status === "pending" && !!task.timerActive
   if (filter === "today") {
@@ -67,6 +84,85 @@ function matchesFilter(task, filter) {
   }
   if (filter === "done") return task.status === "completed"
   return task.status === "pending"
+}
+
+function matchesAdvanced(task, spec) {
+  if (!task || !spec) return false
+
+  var status = String(spec.status || "open")
+  if (status === "open") {
+    if (task.status !== "pending" && task.status !== "waiting") return false
+  } else if (status === "pending") {
+    if (task.status !== "pending") return false
+  } else if (status === "waiting") {
+    if (task.status !== "waiting") return false
+  } else if (status === "completed") {
+    if (task.status !== "completed") return false
+  } else if (status === "active") {
+    if (!(task.status === "pending" && task.timerActive)) return false
+  }
+  // status === "all" → any status (except deleted, already stripped)
+
+  var project = String(spec.project || "")
+  if (project === "__none__") {
+    if (task.project) return false
+  } else if (project !== "" && project !== "__all__") {
+    if (task.project !== project) return false
+  }
+
+  var priority = String(spec.priority || "")
+  if (priority === "__none__") {
+    if (task.priority) return false
+  } else if (priority !== "") {
+    if (task.priority !== priority) return false
+  }
+
+  var due = String(spec.due || "")
+  if (due !== "") {
+    var bucket = dueBucket(task)
+    if (due === "overdue" || due === "today" || due === "week" || due === "later" || due === "none") {
+      if (bucket !== due) return false
+    } else if (due === "soon") {
+      if (bucket !== "overdue" && bucket !== "today" && bucket !== "week") return false
+    }
+  }
+
+  var search = String(spec.search || "").trim().toLowerCase()
+  if (search) {
+    var hay = (String(task.description || "") + " " + String(task.details || "") + " " + String(task.project || "")).toLowerCase()
+    if (hay.indexOf(search) < 0) return false
+  }
+
+  var blocked = String(spec.blocked || "")
+  if (blocked === "blocked") {
+    if (!task.blocked) return false
+  } else if (blocked === "blocking") {
+    if (!task.blocking) return false
+  } else if (blocked === "clear") {
+    if (task.blocked || task.blocking) return false
+  }
+
+  var timer = String(spec.timer || "")
+  if (timer === "running") {
+    if (!task.timerActive) return false
+  } else if (timer === "idle") {
+    if (task.timerActive) return false
+  }
+
+  return true
+}
+
+function countActiveFilters(spec) {
+  if (!spec) return 0
+  var n = 0
+  if (spec.status && spec.status !== "open") n++
+  if (spec.project) n++
+  if (spec.priority) n++
+  if (spec.due) n++
+  if (spec.search && String(spec.search).trim()) n++
+  if (spec.blocked) n++
+  if (spec.timer) n++
+  return n
 }
 
 function sortTasks(tasks) {
@@ -120,7 +216,14 @@ function priorityOrder(key) {
   return order[key] !== undefined ? order[key] : 9
 }
 
+// Waiting → in progress → done (matches the editor chip order).
+function statusGroupOrder(key) {
+  var order = { waiting: 0, pending: 1, completed: 2 }
+  return order[key] !== undefined ? order[key] : 9
+}
+
 function buildGroups(tasks, filter, groupBy, tFn) {
+  // When filter is "pass", tasks are already filtered by the caller.
   var filtered = sortTasks(tasks.filter(function (task) { return matchesFilter(task, filter) }))
   if (groupBy === "none" || !groupBy) {
     return [{ key: "", label: "", tasks: filtered }]
@@ -139,6 +242,7 @@ function buildGroups(tasks, filter, groupBy, tFn) {
   keys.sort(function (a, b) {
     if (groupBy === "due") return dueGroupOrder(a) - dueGroupOrder(b)
     if (groupBy === "priority") return priorityOrder(a) - priorityOrder(b)
+    if (groupBy === "status") return statusGroupOrder(a) - statusGroupOrder(b)
     return String(a).localeCompare(String(b))
   })
   var groups = []
@@ -153,11 +257,13 @@ function buildGroups(tasks, filter, groupBy, tFn) {
 }
 
 function datesValid(scheduled, due) {
-  // Soft check for ISO-like dates only; TW natural language passes through.
-  var re = /^\d{4}-\d{2}-\d{2}$/
-  if (scheduled && due && re.test(scheduled) && re.test(due)) {
-    return scheduled <= due
+  function datePrefix(s) {
+    var m = String(s || "").trim().match(/^(\d{4}-\d{2}-\d{2})/)
+    return m ? m[1] : ""
   }
+  var a = datePrefix(scheduled)
+  var b = datePrefix(due)
+  if (a && b) return a <= b
   return true
 }
 
@@ -174,6 +280,85 @@ function flattenRows(groups) {
   return rows
 }
 
+function rowsStructureKey(rows) {
+  if (!rows || !rows.length) return ""
+  var parts = []
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i]
+    if (!r) {
+      parts.push("?")
+      continue
+    }
+    if (r.type === "header")
+      parts.push("h:" + String(r.key || r.label || ""))
+    else
+      parts.push("t:" + String((r.task && r.task.uuid) || ""))
+  }
+  return parts.join("|")
+}
+
+// Explicit keys — Object.keys() is empty on QVariantMap-wrapped tasks from QML.
+var TASK_FIELDS = [
+  "id", "uuid", "description", "status", "project", "priority",
+  "scheduled", "due", "wait", "waitingFor", "outcome", "details", "start", "end",
+  "depends", "blocks", "urgency", "tags", "timerActive", "todaySeconds",
+  "todayLabel", "overdue", "blocked", "blocking"
+]
+
+function toJsArray(v) {
+  if (!v) return []
+  if (Array.isArray(v)) return v.slice()
+  // QVariantList / array-like from QML — no .indexOf, but has .length
+  var out = []
+  var len = Number(v.length) || 0
+  for (var i = 0; i < len; i++) out.push(v[i])
+  return out
+}
+
+function listContains(list, value) {
+  var arr = toJsArray(list)
+  var want = String(value)
+  for (var i = 0; i < arr.length; i++) {
+    if (String(arr[i]) === want) return true
+  }
+  return false
+}
+
+function copyTaskFields(dst, src) {
+  if (!dst || !src) return
+  for (var i = 0; i < TASK_FIELDS.length; i++) {
+    var k = TASK_FIELDS[i]
+    var v = src[k]
+    if (k === "depends" || k === "blocks" || k === "tags")
+      dst[k] = toJsArray(v)
+    else if (v !== undefined)
+      dst[k] = v
+  }
+}
+
+// Fresh object so QML bindings re-evaluate when dataRev changes.
+function taskSnapshot(t, rev) {
+  if (!t) return null
+  var out = {}
+  copyTaskFields(out, t)
+  out._rev = rev
+  return out
+}
+
+function patchRowsInPlace(prev, next) {
+  if (!prev || !next || prev.length !== next.length) return false
+  if (rowsStructureKey(prev) !== rowsStructureKey(next)) return false
+  for (var i = 0; i < next.length; i++) {
+    if (next[i].type === "task" && prev[i].task && next[i].task)
+      copyTaskFields(prev[i].task, next[i].task)
+    else if (next[i].type === "header") {
+      prev[i].label = next[i].label
+      prev[i].key = next[i].key
+    }
+  }
+  return true
+}
+
 function findTask(tasks, uuid) {
   for (var i = 0; i < tasks.length; i++) {
     if (tasks[i].uuid === uuid) return tasks[i]
@@ -182,7 +367,17 @@ function findTask(tasks, uuid) {
 }
 
 function pendingForDeps(tasks, excludeUuid) {
-  return tasks.filter(function (t) {
-    return t.status === "pending" && t.uuid && t.uuid !== excludeUuid
-  })
+  // Offer anything open (pending/waiting) plus completed — useful when
+  // almost all work is already done and you still want an explicit link.
+  var open = []
+  var done = []
+  for (var i = 0; i < tasks.length; i++) {
+    var t = tasks[i]
+    if (!t || !t.uuid || t.uuid === excludeUuid) continue
+    if (t.status === "pending" || t.status === "waiting") open.push(t)
+    else if (t.status === "completed") done.push(t)
+  }
+  open.sort(function (a, b) { return (a.id || 0) - (b.id || 0) })
+  done.sort(function (a, b) { return (b.id || 0) - (a.id || 0) })
+  return open.concat(done)
 }

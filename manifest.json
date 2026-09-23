@@ -35,13 +35,6 @@
         "defaultValue": 30
       },
       {
-        "key": "defaultFilter",
-        "type": "string",
-        "label": "Default filter",
-        "description": "all | active | today | done",
-        "defaultValue": "all"
-      },
-      {
         "key": "defaultGroupBy",
         "type": "string",
         "label": "Default group by",

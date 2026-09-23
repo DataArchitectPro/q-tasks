@@ -10,7 +10,8 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 
@@ -77,6 +78,267 @@ def format_duration(seconds: int) -> str:
     return f"{m}:{s:02d}"
 
 
+def parse_duration_to_seconds(text: str) -> int | None:
+    """Parse UI durations: 30m, 1h, 1h30m, 1:30, 1:30:00, 90 (=minutes)."""
+    raw = str(text or "").strip().lower().replace(" ", "")
+    if not raw:
+        return None
+    # Accept Russian unit letters and common English unit words.
+    for src, dst in (
+        ("minutes", "m"),
+        ("minute", "m"),
+        ("mins", "m"),
+        ("min", "m"),
+        ("hours", "h"),
+        ("hour", "h"),
+        ("hrs", "h"),
+        ("hr", "h"),
+        ("seconds", "s"),
+        ("second", "s"),
+        ("secs", "s"),
+        ("sec", "s"),
+        ("ч", "h"),
+        ("м", "m"),
+        ("с", "s"),
+    ):
+        raw = raw.replace(src, dst)
+
+    if re.fullmatch(r"\d+:\d{2}(:\d{2})?", raw):
+        parts = [int(p) for p in raw.split(":")]
+        if len(parts) == 2:
+            return parts[0] * 3600 + parts[1] * 60
+        return parts[0] * 3600 + parts[1] * 60 + parts[2]
+
+    if re.fullmatch(r"\d+", raw):
+        return int(raw) * 60
+
+    # ISO-ish PT1H30M / P1DT2H — keep simple subset
+    if raw.startswith("pt") or raw.startswith("p"):
+        m = re.fullmatch(
+            r"p(?:(\d+(?:\.\d+)?)d)?(?:t(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?(?:(\d+(?:\.\d+)?)s)?)?",
+            raw,
+        )
+        if m and any(m.groups()):
+            days = float(m.group(1) or 0)
+            hours = float(m.group(2) or 0)
+            mins = float(m.group(3) or 0)
+            secs = float(m.group(4) or 0)
+            return int(days * 86400 + hours * 3600 + mins * 60 + secs)
+
+    m = re.fullmatch(
+        r"(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?(?:(\d+(?:\.\d+)?)s)?",
+        raw,
+    )
+    if m and any(m.groups()):
+        hours = float(m.group(1) or 0)
+        mins = float(m.group(2) or 0)
+        secs = float(m.group(3) or 0)
+        total = int(hours * 3600 + mins * 60 + secs)
+        return total if total > 0 else None
+
+    return None
+
+
+def fmt_local(dt: datetime) -> str:
+    return dt.astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def find_raw_task(uuid: str) -> dict[str, Any] | None:
+    for t in export_tasks():
+        if str(t.get("uuid") or "") == uuid:
+            return t
+    return None
+
+
+def timew_day_intervals(tag: str | None = None) -> list[dict[str, Any]]:
+    if not which("timew"):
+        return []
+    cmd = ["timew", "export", ":day"]
+    if tag:
+        cmd.append(tag)
+    proc = run(cmd)
+    if proc.returncode != 0:
+        return []
+    try:
+        data = json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError:
+        return []
+    return [iv for iv in data if isinstance(iv, dict)]
+
+
+def timew_open_start() -> datetime | None:
+    """Start of the currently open (active) interval, if any."""
+    for iv in timew_day_intervals():
+        if iv.get("end"):
+            continue
+        return parse_iso(str(iv.get("start") or ""))
+    # Fallback: unfiltered export in case open interval started before today
+    if not which("timew"):
+        return None
+    proc = run(["timew", "get", "dom.active"])
+    if proc.returncode != 0 or str(proc.stdout or "").strip() in ("", "0"):
+        return None
+    proc = run(["timew", "get", "dom.active.start"])
+    ts = str(proc.stdout or "").strip()
+    return parse_iso(ts) if ts else None
+
+
+def ensure_aware(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def local_day_start(moment: datetime) -> datetime:
+    local = ensure_aware(moment).astimezone()
+    return local.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def timew_occupied_ranges(window_start: datetime, window_end: datetime) -> list[tuple[datetime, datetime]]:
+    """Closed intervals overlapping [window_start, window_end], clipped to the window."""
+    if not which("timew"):
+        return []
+    proc = run(
+        [
+            "timew",
+            "export",
+            fmt_local(window_start),
+            "-",
+            fmt_local(window_end + timedelta(seconds=1)),
+        ]
+    )
+    if proc.returncode != 0:
+        raw_list: list[Any] = timew_day_intervals()
+    else:
+        try:
+            data = json.loads(proc.stdout or "[]")
+        except json.JSONDecodeError:
+            data = []
+        raw_list = data if isinstance(data, list) else []
+
+    ws = ensure_aware(window_start)
+    we = ensure_aware(window_end)
+    out: list[tuple[datetime, datetime]] = []
+    for iv in raw_list:
+        if not isinstance(iv, dict):
+            continue
+        s = parse_iso(str(iv.get("start") or ""))
+        if not s:
+            continue
+        e = parse_iso(str(iv.get("end") or "")) if iv.get("end") else we
+        if not e:
+            continue
+        s = ensure_aware(s)
+        e = ensure_aware(e)
+        # Clip to window
+        cs = max(s, ws)
+        ce = min(e, we)
+        if cs < ce:
+            out.append((cs, ce))
+    # Merge overlapping/adjacent occupied blocks
+    if not out:
+        return []
+    out.sort(key=lambda p: p[0])
+    merged: list[tuple[datetime, datetime]] = [out[0]]
+    for s, e in out[1:]:
+        ps, pe = merged[-1]
+        if s <= pe:
+            merged[-1] = (ps, max(pe, e))
+        else:
+            merged.append((s, e))
+    return merged
+
+
+def free_gaps_today(anchor: datetime) -> list[tuple[datetime, datetime]]:
+    """Free ranges within local today up to anchor, latest gap first."""
+    anchor = ensure_aware(anchor)
+    day_start = local_day_start(anchor)
+    if anchor <= day_start:
+        return []
+    occupied = timew_occupied_ranges(day_start, anchor)
+    gaps: list[tuple[datetime, datetime]] = []
+    cursor = day_start
+    for s, e in occupied:
+        if cursor < s:
+            gaps.append((cursor, s))
+        cursor = max(cursor, e)
+    if cursor < anchor:
+        gaps.append((cursor, anchor))
+    gaps.sort(key=lambda p: p[1], reverse=True)
+    return gaps
+
+
+def plan_today_track_slices(anchor: datetime, duration_secs: int) -> list[tuple[datetime, datetime]]:
+    """
+    Pack as much as possible into free gaps of local today (latest first).
+    May return slices totaling less than duration_secs if the day is full.
+    """
+    if duration_secs <= 0:
+        return []
+    gaps = free_gaps_today(anchor)
+    remaining = duration_secs
+    slices: list[tuple[datetime, datetime]] = []
+    for gap_start, gap_end in gaps:
+        if remaining <= 0:
+            break
+        avail = int((gap_end - gap_start).total_seconds())
+        if avail <= 0:
+            continue
+        take = min(remaining, avail)
+        start = gap_end - timedelta(seconds=take)
+        slices.append((start, gap_end))
+        remaining -= take
+    return slices
+
+
+def today_key(moment: datetime | None = None) -> str:
+    local = ensure_aware(moment or datetime.now(timezone.utc)).astimezone()
+    return local.strftime("%Y%m%d")
+
+
+def parse_timecorrection(raw_val: Any) -> tuple[str, int]:
+    """UDA timecorrection format: YYYYMMDD:seconds (seconds may be negative)."""
+    text = str(raw_val or "").strip()
+    if not text:
+        return "", 0
+    if ":" not in text:
+        # Legacy/plain seconds — treat as today
+        try:
+            return today_key(), int(float(text))
+        except ValueError:
+            return "", 0
+    day, _, rest = text.partition(":")
+    try:
+        return day, int(float(rest))
+    except ValueError:
+        return "", 0
+
+
+def timecorrection_for_today(raw_val: Any, moment: datetime | None = None) -> int:
+    day, secs = parse_timecorrection(raw_val)
+    if not day or day != today_key(moment):
+        return 0
+    return secs
+
+
+def format_timecorrection(day: str, secs: int) -> str:
+    return f"{day}:{int(secs)}"
+
+
+def set_timecorrection(uuid: str, day: str, secs: int) -> subprocess.CompletedProcess[str]:
+    if secs == 0:
+        return task_cmd(uuid, "modify", "timecorrection:")
+    return task_cmd(uuid, "modify", f"timecorrection:{format_timecorrection(day, secs)}")
+
+
+def task_timew_tags(raw: dict[str, Any]) -> list[str]:
+    tags = [str(raw.get("uuid") or ""), str(raw.get("description") or "")]
+    project = str(raw.get("project") or "").strip()
+    if project:
+        tags.append(project)
+    return [t for t in tags if t]
+
+
 def export_tasks() -> list[dict[str, Any]]:
     # Prefer pending + completed (recent) + started; filter deleted out.
     proc = task_cmd("export")
@@ -97,6 +359,210 @@ def list_projects() -> list[str]:
         return []
     lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
     return sorted(set(lines), key=str.casefold)
+
+
+EXTRA_PROJECTS_PATH = Path.home() / ".local" / "share" / "q.tasks" / "extra-projects.json"
+DATA_DIR = Path.home() / ".local" / "share" / "q.tasks"
+UI_SETTINGS_PATH = DATA_DIR / "ui-settings.json"
+DEBUG_LOG_PATH = DATA_DIR / "debug.log"
+DEBUG_LOG_MAX_BYTES = 2 * 1024 * 1024
+# Legacy path inside the plugin dir triggered Omarchy hot-reload on every write.
+_LEGACY_EXTRA_PROJECTS_PATH = (
+    Path.home() / ".config" / "omarchy" / "plugins" / "q.tasks" / "extra-projects.json"
+)
+
+
+def ensure_data_dir() -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def load_ui_settings() -> dict[str, Any]:
+    ensure_data_dir()
+    try:
+        data = json.loads(UI_SETTINGS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return {"debugLogging": False, "sessionId": "", "sessionStartedAt": ""}
+    if not isinstance(data, dict):
+        return {"debugLogging": False, "sessionId": "", "sessionStartedAt": ""}
+    return {
+        "debugLogging": bool(data.get("debugLogging")),
+        "sessionId": str(data.get("sessionId") or ""),
+        "sessionStartedAt": str(data.get("sessionStartedAt") or ""),
+    }
+
+
+def save_ui_settings(settings: dict[str, Any]) -> None:
+    ensure_data_dir()
+    UI_SETTINGS_PATH.write_text(
+        json.dumps(settings, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _rotate_debug_log_if_needed() -> None:
+    try:
+        if DEBUG_LOG_PATH.is_file() and DEBUG_LOG_PATH.stat().st_size > DEBUG_LOG_MAX_BYTES:
+            bak = DEBUG_LOG_PATH.with_suffix(".log.1")
+            if bak.is_file():
+                bak.unlink()
+            DEBUG_LOG_PATH.rename(bak)
+    except OSError:
+        pass
+
+
+def append_debug_log(event: str, detail: dict[str, Any] | None = None) -> None:
+    """Append one structured line. Safe to call even when logging is off (caller gates)."""
+    ensure_data_dir()
+    _rotate_debug_log_if_needed()
+    settings = load_ui_settings()
+    now = datetime.now().astimezone()
+    started = settings.get("sessionStartedAt") or ""
+    elapsed = ""
+    if started:
+        try:
+            t0 = datetime.fromisoformat(started)
+            elapsed = f"{(now - t0).total_seconds():.3f}s"
+        except ValueError:
+            elapsed = "?"
+    payload = detail if isinstance(detail, dict) else {}
+    line = {
+        "ts": now.isoformat(timespec="milliseconds"),
+        "elapsed": elapsed,
+        "session": settings.get("sessionId") or "",
+        "pid": os.getpid(),
+        "event": str(event or ""),
+        "detail": payload,
+    }
+    with DEBUG_LOG_PATH.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+
+def begin_debug_session() -> dict[str, Any]:
+    import secrets
+
+    settings = load_ui_settings()
+    settings["debugLogging"] = True
+    settings["sessionId"] = secrets.token_hex(4)
+    settings["sessionStartedAt"] = datetime.now().astimezone().isoformat(timespec="seconds")
+    save_ui_settings(settings)
+    append_debug_log(
+        "session.start",
+        {
+            "logPath": str(DEBUG_LOG_PATH),
+            "sessionId": settings["sessionId"],
+            "startedAt": settings["sessionStartedAt"],
+        },
+    )
+    return settings
+
+
+def end_debug_session() -> dict[str, Any]:
+    settings = load_ui_settings()
+    if settings.get("debugLogging"):
+        append_debug_log("session.end", {"sessionId": settings.get("sessionId") or ""})
+    settings["debugLogging"] = False
+    save_ui_settings(settings)
+    return settings
+
+
+def cmd_settings_get(_: argparse.Namespace) -> int:
+    s = load_ui_settings()
+    return ok_json(
+        {
+            "ok": True,
+            "debugLogging": bool(s.get("debugLogging")),
+            "sessionId": s.get("sessionId") or "",
+            "sessionStartedAt": s.get("sessionStartedAt") or "",
+            "logPath": str(DEBUG_LOG_PATH),
+        }
+    )
+
+
+def cmd_settings_set(args: argparse.Namespace) -> int:
+    enabled = bool(getattr(args, "debug_logging", False))
+    if enabled:
+        s = begin_debug_session()
+    else:
+        s = end_debug_session()
+    return ok_json(
+        {
+            "ok": True,
+            "debugLogging": bool(s.get("debugLogging")),
+            "sessionId": s.get("sessionId") or "",
+            "sessionStartedAt": s.get("sessionStartedAt") or "",
+            "logPath": str(DEBUG_LOG_PATH),
+        }
+    )
+
+
+def cmd_debug_log(args: argparse.Namespace) -> int:
+    # Always append when invoked — UI only calls this while logging is on.
+    detail: dict[str, Any] = {}
+    raw = getattr(args, "json", None)
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                detail = parsed
+        except json.JSONDecodeError:
+            detail = {"_badJson": str(raw)[:200]}
+    msg = getattr(args, "message", None)
+    if msg:
+        detail["message"] = str(msg)[:500]
+    append_debug_log(str(getattr(args, "event", "") or "log"), detail)
+    return ok_json({"ok": True})
+
+
+def load_extra_projects() -> list[str]:
+    path = EXTRA_PROJECTS_PATH
+    if not path.is_file() and _LEGACY_EXTRA_PROJECTS_PATH.is_file():
+        try:
+            path = _LEGACY_EXTRA_PROJECTS_PATH
+        except OSError:
+            path = EXTRA_PROJECTS_PATH
+    try:
+        raw = path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[str] = []
+    for item in data:
+        name = str(item or "").strip()
+        if name and ":" not in name and name not in out:
+            out.append(name)
+    return out
+
+
+def save_extra_projects(names: list[str]) -> None:
+    cleaned: list[str] = []
+    for name in names:
+        n = str(name or "").strip()
+        if n and ":" not in n and n not in cleaned:
+            cleaned.append(n)
+    EXTRA_PROJECTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    EXTRA_PROJECTS_PATH.write_text(
+        json.dumps(sorted(cleaned, key=str.casefold), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    # Remove legacy file so the plugin watcher stops spuriously reloading.
+    try:
+        if _LEGACY_EXTRA_PROJECTS_PATH.is_file():
+            _LEGACY_EXTRA_PROJECTS_PATH.unlink()
+    except OSError:
+        pass
+
+
+def all_projects() -> list[str]:
+    """TW projects plus locally created names not yet assigned to a task."""
+    tw = set(list_projects())
+    extras = load_extra_projects()
+    # Drop extras that already exist in Taskwarrior — no longer needed locally.
+    keep = [n for n in extras if n not in tw]
+    if keep != extras:
+        save_extra_projects(keep)
+    return sorted(tw | set(keep), key=str.casefold)
 
 
 def timew_active_and_today() -> tuple[dict[str, Any] | None, dict[str, int]]:
@@ -157,6 +623,8 @@ def normalize_task(raw: dict[str, Any], today: dict[str, int], active: dict[str,
         today_secs = today[uuid]
     elif desc and desc in today:
         today_secs = today[desc]
+    # Manual adjustments when the Timewarrior timeline has no free slot.
+    today_secs = max(0, today_secs + timecorrection_for_today(raw.get("timecorrection")))
     # If tagged with both project and description, timew sums may be on either.
 
     # Source of truth is Taskwarrior's start attribute (timew can lag the hook).
@@ -164,8 +632,17 @@ def normalize_task(raw: dict[str, Any], today: dict[str, int], active: dict[str,
 
     due = raw.get("due")
     scheduled = raw.get("scheduled")
+    wait = raw.get("wait")
+    raw_status = str(raw.get("status") or "")
+    # TW3 keeps status=pending when wait: is set; surface as "waiting" while wait is future.
+    status = raw_status
+    if raw_status == "pending" and wait:
+        wait_dt = parse_iso(str(wait))
+        if wait_dt and wait_dt > datetime.now(timezone.utc):
+            status = "waiting"
+
     overdue = False
-    if due and raw.get("status") == "pending":
+    if due and status == "pending":
         due_dt = parse_iso(str(due))
         if due_dt and due_dt < datetime.now(timezone.utc):
             overdue = True
@@ -174,68 +651,76 @@ def normalize_task(raw: dict[str, Any], today: dict[str, int], active: dict[str,
         "id": int(raw.get("id") or 0),
         "uuid": uuid,
         "description": desc,
-        "status": str(raw.get("status") or ""),
+        "status": status,
         "project": project,
         "priority": str(raw.get("priority") or ""),
         "scheduled": str(scheduled) if scheduled else "",
         "due": str(due) if due else "",
+        "wait": str(wait) if wait else "",
+        "waitingFor": str(raw.get("waitingfor") or ""),
+        "outcome": str(raw.get("outcome") or ""),
+        "details": str(raw.get("details") or ""),
         "start": str(raw.get("start") or ""),
         "end": str(raw.get("end") or ""),
         "depends": [str(d) for d in depends],
+        "blocks": [],
         "urgency": float(raw.get("urgency") or 0),
         "tags": list(raw.get("tags") or []) if isinstance(raw.get("tags"), list) else [],
         "timerActive": timer_active,
         "todaySeconds": today_secs,
         "todayLabel": format_duration(today_secs) if today_secs else "",
         "overdue": overdue,
-        "blocked": bool(depends) and raw.get("status") == "pending",
+        "blocked": False,
+        "blocking": False,
     }
 
 
-def cmd_export(_: argparse.Namespace) -> int:
+def cmd_export(_: argparse.Namespace, extra: dict | None = None) -> int:
     available = which("task")
     timew_available = which("timew")
     if not available:
-        return ok_json(
-            {
-                "ok": True,
-                "available": False,
-                "timewAvailable": timew_available,
-                "tasks": [],
-                "projects": [],
-                "pending": 0,
-                "actionable": 0,
-                "active": None,
-                "label": "!",
-                "tooltip": "Taskwarrior is not installed",
-            }
-        )
+        payload = {
+            "ok": True,
+            "available": False,
+            "timewAvailable": timew_available,
+            "tasks": [],
+            "projects": [],
+            "pending": 0,
+            "actionable": 0,
+            "active": None,
+            "label": "!",
+            "tooltip": "Taskwarrior is not installed",
+        }
+        if extra:
+            payload.update(extra)
+        return ok_json(payload)
 
     active, today = timew_active_and_today()
     raw_tasks = export_tasks()
     tasks = [normalize_task(t, today, active) for t in raw_tasks]
 
-    # Resolve blocked: depends may be UUIDs; mark blocked if any dep not completed.
+    # Resolve dependency graph both ways:
+    # - depends: tasks this one waits on
+    # - blocks:  tasks that wait on this one
     by_uuid = {t["uuid"]: t for t in tasks if t["uuid"]}
     completed = {u for u, t in by_uuid.items() if t["status"] == "completed"}
-    for t in tasks:
-        deps = t["depends"]
-        if not deps:
-            t["blocked"] = False
-            t["blocking"] = False
-            continue
-        unresolved = [d for d in deps if d not in completed]
-        t["blocked"] = t["status"] == "pending" and len(unresolved) > 0
-        t["blocking"] = False
+    open_statuses = {"pending", "waiting"}
 
     for t in tasks:
-        if t["status"] != "pending":
-            continue
-        for other in tasks:
-            if t["uuid"] and t["uuid"] in (other.get("depends") or []):
-                if other["status"] == "pending":
-                    t["blocking"] = True
-                    break
+        t["blocks"] = []
+        t["blocking"] = False
+        deps = t.get("depends") or []
+        unresolved = [d for d in deps if d not in completed]
+        t["blocked"] = t["status"] in open_statuses and len(unresolved) > 0
+
+    for t in tasks:
+        for dep_uuid in t.get("depends") or []:
+            blocker = by_uuid.get(str(dep_uuid))
+            if not blocker:
+                continue
+            blocker["blocks"].append(t["uuid"])
+            if t["status"] in open_statuses and blocker["status"] in open_statuses:
+                blocker["blocking"] = True
 
     pending = [t for t in tasks if t["status"] == "pending"]
     actionable = [
@@ -264,25 +749,26 @@ def cmd_export(_: argparse.Namespace) -> int:
 
     tooltip = active_desc if active_desc else (f"{count} pending" if count else "No pending tasks")
 
-    return ok_json(
-        {
-            "ok": True,
-            "available": True,
-            "timewAvailable": timew_available,
-            "tasks": tasks,
-            "projects": list_projects(),
-            "pending": count,
-            "actionable": len(actionable),
-            "active": {
-                "description": active_desc,
-                "uuid": active_uuid,
-            }
-            if active_desc or active_uuid
-            else None,
-            "label": label,
-            "tooltip": tooltip,
+    payload = {
+        "ok": True,
+        "available": True,
+        "timewAvailable": timew_available,
+        "tasks": tasks,
+        "projects": all_projects(),
+        "pending": count,
+        "actionable": len(actionable),
+        "active": {
+            "description": active_desc,
+            "uuid": active_uuid,
         }
-    )
+        if active_desc or active_uuid
+        else None,
+        "label": label,
+        "tooltip": tooltip,
+    }
+    if extra:
+        payload.update(extra)
+    return ok_json(payload)
 
 
 def build_mods(args: argparse.Namespace) -> list[str]:
@@ -309,6 +795,11 @@ def build_mods(args: argparse.Namespace) -> list[str]:
             mods.append("due:")
         else:
             mods.append(f"due:{args.due}")
+    if getattr(args, "details", None) is not None:
+        if args.details == "":
+            mods.append("details:")
+        else:
+            mods.append(f"details:{args.details}")
     return mods
 
 
@@ -321,14 +812,99 @@ def mutate_and_export(proc: subprocess.CompletedProcess[str]) -> int:
     return cmd_export(ns)
 
 
+def patch_task_json(uuid: str, fields: dict[str, Any]) -> subprocess.CompletedProcess[str]:
+    """Merge fields into a task via `task import` (needed for multiline UDAs)."""
+    proc = task_cmd(uuid, "export")
+    if proc.returncode != 0:
+        return proc
+    try:
+        data = json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError:
+        return subprocess.CompletedProcess(proc.args, 1, "", "invalid task export")
+    if not isinstance(data, list) or not data:
+        return subprocess.CompletedProcess(proc.args, 1, "", "task not found")
+    task = data[0]
+    for key, value in fields.items():
+        if value is None or value == "":
+            task.pop(key, None)
+        else:
+            task[key] = value
+    return run(["task", *TW_RC, "import", "-"], input_text=json.dumps([task]))
+
+
 def cmd_add(args: argparse.Namespace) -> int:
     if not args.description or not str(args.description).strip():
         return err_json("description is required")
-    mods = build_mods(args)
-    # description is first positional for task add
+    details = getattr(args, "details", None)
+    waiting_for = getattr(args, "waiting_for", None)
+    outcome = getattr(args, "outcome", None)
+    depends = [str(d) for d in (getattr(args, "depend", None) or []) if d]
+    start_timer = bool(getattr(args, "start_timer", False))
+    # Don't pass details through CLI modify syntax — multiline breaks it.
+    tmp = argparse.Namespace(
+        description=args.description,
+        project=args.project,
+        priority=args.priority,
+        scheduled=args.scheduled,
+        due=args.due,
+        details=None,
+    )
+    mods = build_mods(tmp)
     desc = mods[0]
-    rest = mods[1:]
-    return mutate_and_export(task_cmd("add", *rest, "--", desc))
+    rest = list(mods[1:])
+    # Default lifecycle: Waiting → In progress → Done.
+    # TW models waiting as pending + future wait:.
+    status = str(getattr(args, "status", None) or "waiting").strip().lower()
+    mark_done = status in ("completed", "done")
+    if status in ("waiting", "wait"):
+        rest.append("wait:tomorrow")
+    elif status in ("pending", "open", ""):
+        pass
+    elif mark_done:
+        pass
+    else:
+        return err_json("status must be waiting, pending, or completed")
+    before = {str(t.get("uuid") or "") for t in export_tasks()}
+    proc = task_cmd("add", *rest, "--", desc)
+    if proc.returncode != 0:
+        return mutate_and_export(proc)
+
+    after = export_tasks()
+    new_uuid = ""
+    for t in after:
+        u = str(t.get("uuid") or "")
+        if u and u not in before:
+            new_uuid = u
+            break
+
+    if new_uuid:
+        if details is not None and str(details) != "":
+            patch = patch_task_json(new_uuid, {"details": str(details)})
+            if patch.returncode != 0:
+                return mutate_and_export(patch)
+        if waiting_for is not None and str(waiting_for).strip() != "":
+            wf = task_cmd(new_uuid, "modify", f"waitingfor:{waiting_for}")
+            if wf.returncode != 0:
+                return mutate_and_export(wf)
+        if outcome is not None and str(outcome).strip() != "":
+            oc = task_cmd(new_uuid, "modify", f"outcome:{outcome}")
+            if oc.returncode != 0:
+                return mutate_and_export(oc)
+        for dep in depends:
+            dep_proc = task_cmd(new_uuid, "modify", f"depends:{dep}")
+            if dep_proc.returncode != 0:
+                return mutate_and_export(dep_proc)
+        if mark_done:
+            done_proc = task_cmd(new_uuid, "done")
+            if done_proc.returncode != 0:
+                return mutate_and_export(done_proc)
+        elif start_timer:
+            # Start only makes sense for an open task.
+            start_proc = task_cmd(new_uuid, "start")
+            if start_proc.returncode != 0:
+                return mutate_and_export(start_proc)
+
+    return cmd_export(argparse.Namespace(), extra={"createdUuid": new_uuid} if new_uuid else None)
 
 
 def cmd_modify(args: argparse.Namespace) -> int:
@@ -337,18 +913,29 @@ def cmd_modify(args: argparse.Namespace) -> int:
     mods: list[str] = []
     if args.description is not None and args.description != "":
         mods.append(f"description:{args.description}")
-    # Reuse optional field builders without requiring description first
+    # Reuse optional field builders without requiring description first.
+    # `details` is applied via JSON import so multiline notes survive.
+    details = getattr(args, "details", None)
     tmp = argparse.Namespace(
         description=None,
         project=args.project,
         priority=args.priority,
         scheduled=args.scheduled,
         due=args.due,
+        details=None,
     )
     mods.extend(build_mods(tmp))
-    if not mods:
+    if not mods and details is None:
         return err_json("no modifications")
-    return mutate_and_export(task_cmd(args.uuid, "modify", *mods))
+    if mods:
+        proc = task_cmd(args.uuid, "modify", *mods)
+        if proc.returncode != 0:
+            return mutate_and_export(proc)
+    if details is not None:
+        proc = patch_task_json(args.uuid, {"details": str(details)})
+        if proc.returncode != 0:
+            return mutate_and_export(proc)
+    return cmd_export(argparse.Namespace())
 
 
 def cmd_done(args: argparse.Namespace) -> int:
@@ -372,16 +959,41 @@ def cmd_stop(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    # pending | completed via done | waiting
+    # pending | completed via done | waiting (via wait: date + optional waitingfor UDA)
     st = args.status
     if st == "completed" or st == "done":
         return mutate_and_export(task_cmd(args.uuid, "done"))
     if st == "pending":
-        return mutate_and_export(task_cmd(args.uuid, "modify", "status:pending"))
+        # Clear wait + reason so TW leaves virtual Waiting state.
+        return mutate_and_export(task_cmd(args.uuid, "modify", "status:pending", "wait:", "waitingfor:"))
     if st == "waiting":
         wait = args.wait or "tomorrow"
-        return mutate_and_export(task_cmd(args.uuid, "modify", f"wait:{wait}"))
+        mods = ["status:pending", f"wait:{wait}"]
+        if args.waiting_for is not None:
+            if str(args.waiting_for).strip() == "":
+                mods.append("waitingfor:")
+            else:
+                mods.append(f"waitingfor:{args.waiting_for}")
+        return mutate_and_export(task_cmd(args.uuid, "modify", *mods))
     return err_json(f"unknown status: {st}")
+
+
+def cmd_waiting_for(args: argparse.Namespace) -> int:
+    if not args.uuid:
+        return err_json("uuid is required")
+    text = "" if args.text is None else str(args.text)
+    if text.strip() == "":
+        return mutate_and_export(task_cmd(args.uuid, "modify", "waitingfor:"))
+    return mutate_and_export(task_cmd(args.uuid, "modify", f"waitingfor:{text}"))
+
+
+def cmd_outcome(args: argparse.Namespace) -> int:
+    if not args.uuid:
+        return err_json("uuid is required")
+    text = "" if args.text is None else str(args.text)
+    if text.strip() == "":
+        return mutate_and_export(task_cmd(args.uuid, "modify", "outcome:"))
+    return mutate_and_export(task_cmd(args.uuid, "modify", f"outcome:{text}"))
 
 
 def cmd_deps(args: argparse.Namespace) -> int:
@@ -402,18 +1014,139 @@ def cmd_deps(args: argparse.Namespace) -> int:
 def cmd_projects(args: argparse.Namespace) -> int:
     action = args.action
     if action == "list":
-        return ok_json({"ok": True, "projects": list_projects()})
+        return ok_json({"ok": True, "projects": all_projects()})
+
+    if action == "create":
+        name = str(getattr(args, "name", "") or "").strip()
+        if not name or ":" in name:
+            return err_json("project name required (no colon)")
+        tw = set(list_projects())
+        extras = load_extra_projects()
+        if name not in tw and name not in extras:
+            extras.append(name)
+            save_extra_projects(extras)
+        return cmd_export(argparse.Namespace())
+
     if action == "rename":
-        if not args.old or not args.new or ":" in args.new:
+        old = str(args.old or "").strip()
+        new = str(args.new or "").strip()
+        if not old or not new or ":" in new:
             return err_json("old and new project names required (no colon)")
-        return mutate_and_export(
-            task_cmd(f"project:{args.old}", "modify", f"project:{args.new}")
-        )
+        extras = load_extra_projects()
+        if old in extras:
+            extras = [new if n == old else n for n in extras]
+            save_extra_projects(extras)
+        # Rename on tasks that use it (no-op / fail if none — stash-only is fine).
+        if old in list_projects():
+            return mutate_and_export(task_cmd(f"project:{old}", "modify", f"project:{new}"))
+        return cmd_export(argparse.Namespace())
+
     if action == "clear":
-        if not args.old:
+        old = str(args.old or "").strip()
+        if not old:
             return err_json("project name required")
-        return mutate_and_export(task_cmd(f"project:{args.old}", "modify", "project:"))
+        extras = [n for n in load_extra_projects() if n != old]
+        save_extra_projects(extras)
+        if old in list_projects():
+            return mutate_and_export(task_cmd(f"project:{old}", "modify", "project:"))
+        return cmd_export(argparse.Namespace())
+
     return err_json(f"unknown projects action: {action}")
+
+
+def cmd_time(args: argparse.Namespace) -> int:
+    """Manually add or remove tracked time for a task via Timewarrior."""
+    uuid = str(args.uuid or "").strip()
+    if not uuid:
+        return err_json("uuid is required")
+
+    raw = find_raw_task(uuid)
+    if not raw:
+        return err_json("task not found")
+
+    add_text = getattr(args, "duration_add", None)
+    remove_text = getattr(args, "duration_remove", None)
+    duration_text = add_text if add_text is not None else remove_text
+    secs = parse_duration_to_seconds(str(duration_text or ""))
+    if not secs or secs <= 0:
+        return err_json("invalid duration (try 30m, 1h, 1:30)")
+
+    tags = task_timew_tags(raw)
+    now = datetime.now(timezone.utc)
+    has_timew = which("timew")
+
+    if add_text is not None:
+        # Prefer real Timewarrior intervals in free gaps of local today.
+        # Anything that does not fit (timeline already full) goes into a
+        # date-scoped UDA correction so repeated adds still accumulate.
+        end_anchor = (timew_open_start() if has_timew else None) or now
+        if end_anchor.tzinfo is None:
+            end_anchor = end_anchor.replace(tzinfo=timezone.utc)
+
+        remaining = secs
+        if has_timew:
+            slices = plan_today_track_slices(end_anchor, remaining)
+            for start, end in slices:
+                proc = run(["timew", "track", fmt_local(start), "-", fmt_local(end), *tags])
+                if proc.returncode != 0:
+                    msg = (proc.stderr or proc.stdout or "timew track failed").strip()
+                    return err_json(msg)
+                remaining -= int((end - start).total_seconds())
+
+        if remaining > 0:
+            day = today_key(end_anchor)
+            current = timecorrection_for_today(raw.get("timecorrection"), end_anchor)
+            proc = set_timecorrection(uuid, day, current + remaining)
+            if proc.returncode != 0:
+                msg = (proc.stderr or proc.stdout or "failed to save time correction").strip()
+                return err_json(msg)
+
+        return cmd_export(argparse.Namespace())
+
+    # Remove: burn down today's UDA correction first, then shorten timew intervals.
+    remaining = secs
+    day = today_key(now)
+    current = timecorrection_for_today(raw.get("timecorrection"), now)
+    if current > 0 and remaining > 0:
+        take = min(remaining, current)
+        proc = set_timecorrection(uuid, day, current - take)
+        if proc.returncode != 0:
+            msg = (proc.stderr or proc.stdout or "failed to update time correction").strip()
+            return err_json(msg)
+        remaining -= take
+        # Refresh raw correction for subsequent logic isn't needed
+
+    if remaining > 0 and has_timew:
+        guard = 0
+        while remaining > 0 and guard < 50:
+            guard += 1
+            intervals = [
+                iv
+                for iv in timew_day_intervals(uuid)
+                if iv.get("end") and iv.get("id") is not None
+            ]
+            if not intervals:
+                break
+            intervals.sort(key=lambda iv: str(iv.get("start") or ""), reverse=True)
+            iv = intervals[0]
+            length = seconds_between(str(iv.get("start")), str(iv.get("end")), now)
+            if length <= 0:
+                run(["timew", "delete", f"@{iv['id']}"])
+                continue
+            take = min(remaining, length)
+            iid = f"@{iv['id']}"
+            if take >= length:
+                proc = run(["timew", "delete", iid])
+            else:
+                proc = run(["timew", "shorten", iid, f"{take}seconds"])
+            if proc.returncode != 0:
+                msg = (proc.stderr or proc.stdout or "timew adjust failed").strip()
+                return err_json(msg)
+            remaining -= take
+
+    if remaining == secs:
+        return err_json("no tracked time today to remove")
+    return cmd_export(argparse.Namespace())
 
 
 def main() -> int:
@@ -428,6 +1161,16 @@ def main() -> int:
     p_add.add_argument("--priority", default=None)
     p_add.add_argument("--scheduled", default=None)
     p_add.add_argument("--due", default=None)
+    p_add.add_argument("--details", default=None)
+    p_add.add_argument(
+        "--status",
+        default="waiting",
+        help="waiting (default), pending, or completed",
+    )
+    p_add.add_argument("--waiting-for", default=None)
+    p_add.add_argument("--outcome", default=None)
+    p_add.add_argument("--depend", action="append", default=None)
+    p_add.add_argument("--start-timer", action="store_true")
 
     p_mod = sub.add_parser("modify")
     p_mod.add_argument("--uuid", required=True)
@@ -436,6 +1179,7 @@ def main() -> int:
     p_mod.add_argument("--priority", default=None)
     p_mod.add_argument("--scheduled", default=None)
     p_mod.add_argument("--due", default=None)
+    p_mod.add_argument("--details", default=None)
 
     for name in ("done", "delete", "start", "stop"):
         p = sub.add_parser(name)
@@ -445,6 +1189,15 @@ def main() -> int:
     p_st.add_argument("--uuid", required=True)
     p_st.add_argument("--status", required=True)
     p_st.add_argument("--wait", default=None)
+    p_st.add_argument("--waiting-for", default=None)
+
+    p_wf = sub.add_parser("waiting-for")
+    p_wf.add_argument("--uuid", required=True)
+    p_wf.add_argument("--text", default="")
+
+    p_out = sub.add_parser("outcome")
+    p_out.add_argument("--uuid", required=True)
+    p_out.add_argument("--text", default="")
 
     p_deps = sub.add_parser("deps")
     p_deps.add_argument("--uuid", required=True)
@@ -453,9 +1206,25 @@ def main() -> int:
     p_deps.add_argument("--clear", action="store_true")
 
     p_proj = sub.add_parser("projects")
-    p_proj.add_argument("action", choices=["list", "rename", "clear"])
+    p_proj.add_argument("action", choices=["list", "create", "rename", "clear"])
     p_proj.add_argument("--old", default=None)
     p_proj.add_argument("--new", default=None)
+    p_proj.add_argument("--name", default=None)
+
+    p_time = sub.add_parser("time")
+    p_time.add_argument("--uuid", required=True)
+    time_grp = p_time.add_mutually_exclusive_group(required=True)
+    time_grp.add_argument("--add", dest="duration_add", default=None, help="duration to add, e.g. 30m")
+    time_grp.add_argument("--remove", dest="duration_remove", default=None, help="duration to remove")
+
+    p_sg = sub.add_parser("settings-get")
+    p_ss = sub.add_parser("settings-set")
+    p_ss.add_argument("--debug-logging", action=argparse.BooleanOptionalAction, required=True)
+
+    p_dl = sub.add_parser("debug-log")
+    p_dl.add_argument("--event", required=True)
+    p_dl.add_argument("--json", default=None, help="JSON object with safe detail fields")
+    p_dl.add_argument("--message", default=None)
 
     args = parser.parse_args()
     handlers = {
@@ -467,8 +1236,14 @@ def main() -> int:
         "start": cmd_start,
         "stop": cmd_stop,
         "status": cmd_status,
+        "waiting-for": cmd_waiting_for,
+        "outcome": cmd_outcome,
         "deps": cmd_deps,
         "projects": cmd_projects,
+        "time": cmd_time,
+        "settings-get": cmd_settings_get,
+        "settings-set": cmd_settings_set,
+        "debug-log": cmd_debug_log,
     }
     return handlers[args.cmd](args)
 
