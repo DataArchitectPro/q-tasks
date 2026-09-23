@@ -125,6 +125,17 @@ function t(key, localeName) {
     dateApply: "Apply",
     dateTime: "Time",
     dateClear: "Clear",
+    about: "About",
+    aboutTitle: "About q.tasks",
+    aboutVersion: "Version",
+    aboutDeveloper: "Developer",
+    aboutDeveloperName: "DataArchitectPro",
+    aboutGithub: "GitHub",
+    aboutClose: "Close",
+    debugLog: "Debug logging",
+    debugLogOn: "Debug log: ON",
+    debugLogOff: "Debug log: OFF",
+    debugLogHint: "Writes diagnostic events to a local log file",
   }
   var ruMap = {
     title: "Задачи",
@@ -237,6 +248,17 @@ function t(key, localeName) {
     dateApply: "Готово",
     dateTime: "Время",
     dateClear: "Очистить",
+    about: "О плагине",
+    aboutTitle: "О плагине q.tasks",
+    aboutVersion: "Версия",
+    aboutDeveloper: "Разработчик",
+    aboutDeveloperName: "DataArchitectPro",
+    aboutGithub: "GitHub",
+    aboutClose: "Закрыть",
+    debugLog: "Отладочный лог",
+    debugLogOn: "Отладка: ВКЛ",
+    debugLogOff: "Отладка: ВЫКЛ",
+    debugLogHint: "Пишет диагностические события в локальный файл",
   }
   var map = ru ? ruMap : en
   return map[key] !== undefined ? map[key] : (en[key] !== undefined ? en[key] : key)

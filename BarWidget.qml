@@ -15,7 +15,6 @@ BarWidget {
   property bool taskAvailable: true
   property string pillLabel: "\uf0ae"
   property string pillTooltip: ""
-  property bool menuOpen: false
 
   readonly property bool debugLogging: panelLoader.item ? panelLoader.item.debugLogging === true : false
   readonly property string debugLogPath: panelLoader.item ? String(panelLoader.item.debugLogPath || "") : ""
@@ -44,14 +43,12 @@ BarWidget {
   }
 
   function close() {
-    root.menuOpen = false
     if (panelLoader.item && panelLoader.item.close) panelLoader.item.close()
   }
 
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
 
   function closeForPopoutSwitch() {
-    root.menuOpen = false
     if (panelLoader.item) panelLoader.item.closeForPopoutSwitch()
   }
 
@@ -130,67 +127,8 @@ BarWidget {
 
     onPressed: function(b) {
       if (!root.bar) return
-      if (b === Qt.RightButton) {
-        // Close the tasks panel if open so the menu isn't buried under it.
-        if (root.opened && panelLoader.item && panelLoader.item.close)
-          panelLoader.item.close()
-        root.menuOpen = !root.menuOpen
-      } else {
-        root.menuOpen = false
+      if (b === Qt.LeftButton)
         root.togglePanel()
-      }
-    }
-  }
-
-  // Bar widgets must use PopupCard (layer shell), not Controls.Popup.
-  PopupCard {
-    id: trayMenu
-    anchorItem: button
-    bar: root.bar
-    owner: root
-    open: root.menuOpen
-    contentWidth: trayMenu.fittedContentWidth(Style.space(300))
-    contentHeight: trayMenu.fittedContentHeight(menuCol.implicitHeight)
-
-    Column {
-      id: menuCol
-      width: parent.width
-      spacing: Style.space(8)
-
-      Text {
-        width: parent.width
-        text: "q.tasks"
-        color: root.bar ? root.bar.foreground : Color.foreground
-        font.family: root.bar ? root.bar.fontFamily : Style.font.family
-        font.pixelSize: Style.font.caption
-        font.bold: true
-      }
-
-      Toggle {
-        width: parent.width
-        label: root.debugLogging ? "Debug log: ON" : "Debug log: OFF"
-        description: root.debugLogPath || "~/.local/share/q.tasks/debug.log"
-        checked: root.debugLogging
-        foreground: root.bar ? root.bar.foreground : Color.foreground
-        fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-        titleSize: Style.font.body
-        descriptionSize: Style.font.caption
-        onClicked: {
-          if (panelLoader.item && panelLoader.item.setDebugLogging)
-            panelLoader.item.setDebugLogging(!root.debugLogging)
-        }
-      }
-
-      Button {
-        text: "Refresh"
-        foreground: root.bar ? root.bar.foreground : Color.foreground
-        fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-        fontSize: Style.font.caption
-        onClicked: {
-          root.refresh()
-          root.menuOpen = false
-        }
-      }
     }
   }
 }

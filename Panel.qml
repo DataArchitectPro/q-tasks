@@ -66,6 +66,9 @@ Panel {
   property string debugSessionId: ""
   property var _logQueue: []
   property bool _logFlushScheduled: false
+  property bool aboutOpened: false
+  readonly property string pluginVersion: "1.0.0"
+  readonly property string githubUrl: "https://github.com/DataArchitectPro/q-tasks"
 
   readonly property bool editDirty: {
     // Touch every draft field so the binding re-evaluates on edits.
@@ -481,6 +484,7 @@ Panel {
     confirmDelete.opened = false
     confirmClear.opened = false
     if (confirmUnsaved) confirmUnsaved.opened = false
+    root.aboutOpened = false
     root.pendingEditorClose = null
     root.collapseComposer()
     // Closing the panel discards the open editor; ask if dirty.
@@ -1092,8 +1096,14 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: confirmDelete.opened || confirmClear.opened || confirmUnsaved.opened || root.formFocused || root.datePickerCount > 0
-      onCloseRequested: root.close()
+      blocked: confirmDelete.opened || confirmClear.opened || confirmUnsaved.opened || root.aboutOpened || root.formFocused || root.datePickerCount > 0
+      onCloseRequested: {
+        if (root.aboutOpened) {
+          root.aboutOpened = false
+          return
+        }
+        root.close()
+      }
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onMoveRequested: function(dx, dy) {
         if (dy !== 0) root.moveCursor(dy)
@@ -1124,9 +1134,9 @@ Panel {
         spacing: Style.space(10)
 
         // Header
-        Row {
+        Item {
           Layout.fillWidth: true
-          spacing: Style.space(8)
+          height: Math.max(headerLeft.height, headerRight.height)
 
           MouseArea {
             anchors.fill: parent
@@ -1137,44 +1147,68 @@ Panel {
             }
           }
 
-          Text {
-            text: root.tr("title")
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.title
-            font.bold: true
+          Row {
+            id: headerLeft
+            anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(8)
+
+            Text {
+              text: root.tr("title")
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.title
+              font.bold: true
+              anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Text {
+              text: String(root.snapshot.pending || 0)
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Item { width: Style.space(8); height: 1 }
+
+            Button {
+              text: root.tr("viewTasks")
+              selected: root.viewMode === "tasks"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.caption
+              verticalPadding: Style.space(2)
+              horizontalPadding: Style.space(8)
+              onClicked: root.viewMode = "tasks"
+            }
+            Button {
+              text: root.tr("viewProjects")
+              selected: root.viewMode === "projects"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.caption
+              verticalPadding: Style.space(2)
+              horizontalPadding: Style.space(8)
+              onClicked: root.viewMode = "projects"
+            }
           }
 
-          Text {
-            text: String(root.snapshot.pending || 0)
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
+          Row {
+            id: headerRight
+            anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-          }
+            spacing: Style.space(6)
 
-          Item { width: Style.space(8); height: 1 }
-
-          Button {
-            text: root.tr("viewTasks")
-            selected: root.viewMode === "tasks"
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            fontSize: Style.font.caption
-            verticalPadding: Style.space(2)
-            horizontalPadding: Style.space(8)
-            onClicked: root.viewMode = "tasks"
-          }
-          Button {
-            text: root.tr("viewProjects")
-            selected: root.viewMode === "projects"
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            fontSize: Style.font.caption
-            verticalPadding: Style.space(2)
-            horizontalPadding: Style.space(8)
-            onClicked: root.viewMode = "projects"
+            Button {
+              text: root.tr("about")
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.caption
+              verticalPadding: Style.space(2)
+              horizontalPadding: Style.space(8)
+              onClicked: root.aboutOpened = true
+            }
           }
         }
 
@@ -3333,6 +3367,126 @@ Panel {
         onConfirmed: root.confirmClearProjectAction()
       }
 
+      // About + debug logging
+      Item {
+        id: aboutDialog
+        anchors.fill: parent
+        visible: root.aboutOpened
+        z: 20
+
+        Rectangle {
+          anchors.fill: parent
+          color: Util.alpha(Color.background, 0.7)
+          MouseArea {
+            anchors.fill: parent
+            onClicked: root.aboutOpened = false
+          }
+
+          BorderSurface {
+            id: aboutCard
+            width: Math.min(parent.width - Style.space(32), Style.space(420))
+            height: aboutInner.implicitHeight
+              + aboutCard.contentTopInset + aboutCard.contentBottomInset
+            anchors.centerIn: parent
+            color: Color.popups.background
+            borderSpec: Border.flat(Color.accent, Style.normalBorderWidth)
+            padding: Style.space(24)
+            radius: Style.cornerRadius
+
+            MouseArea { anchors.fill: parent; onClicked: {} }
+
+            Column {
+              id: aboutInner
+              x: aboutCard.contentLeftInset
+              y: aboutCard.contentTopInset
+              width: aboutCard.width - aboutCard.contentLeftInset - aboutCard.contentRightInset
+              spacing: Style.space(16)
+
+              Text {
+                width: parent.width
+                text: root.tr("aboutTitle")
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.title
+                font.bold: true
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
+              }
+
+              Column {
+                width: parent.width
+                spacing: Style.space(6)
+
+                Text {
+                  width: parent.width
+                  text: root.tr("aboutVersion") + ": " + root.pluginVersion
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  horizontalAlignment: Text.AlignHCenter
+                }
+
+                Text {
+                  width: parent.width
+                  text: root.tr("aboutDeveloper") + ": " + root.tr("aboutDeveloperName")
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  horizontalAlignment: Text.AlignHCenter
+                }
+
+                Text {
+                  width: parent.width
+                  text: root.tr("aboutGithub") + ": " + root.githubUrl
+                  color: Color.accent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WrapAnywhere
+                  horizontalAlignment: Text.AlignHCenter
+
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: Qt.openUrlExternally(root.githubUrl)
+                  }
+                }
+              }
+
+              Toggle {
+                width: parent.width
+                label: root.debugLogging ? root.tr("debugLogOn") : root.tr("debugLogOff")
+                description: root.debugLogPath || "~/.local/share/q.tasks/debug.log"
+                checked: root.debugLogging
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                titleSize: Style.font.body
+                descriptionSize: Style.font.caption
+                onClicked: root.setDebugLogging(!root.debugLogging)
+              }
+
+              Text {
+                width: parent.width
+                text: root.tr("debugLogHint")
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
+              }
+
+              Button {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: root.tr("aboutClose")
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.caption
+                onClicked: root.aboutOpened = false
+              }
+            }
+          }
+        }
+      }
+
       // Unsaved editor changes: Save / Continue / Discard
       Item {
         id: confirmUnsaved
@@ -3471,6 +3625,10 @@ Panel {
     function open(): void { root.openFromHotkey() }
     function close(): void { root.close() }
     function toggle(): void { root.toggle() }
+    function about(): void {
+      root.openFromHotkey()
+      root.aboutOpened = true
+    }
   }
 
   Component.onCompleted: {
