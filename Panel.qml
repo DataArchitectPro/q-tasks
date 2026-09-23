@@ -30,7 +30,7 @@ Panel {
     tooltip: ""
   })
 
-  property string viewMode: "tasks" // tasks | projects
+  property string viewMode: "tasks" // tasks | projects | about
   property string groupBy: setting("defaultGroupBy", "project")
   property string expandedUuid: ""
   property string pendingDeleteUuid: ""
@@ -64,9 +64,9 @@ Panel {
   property bool debugLogging: false
   property string debugLogPath: ""
   property string debugSessionId: ""
+  property string uiLanguage: "system" // system | ru | en
   property var _logQueue: []
   property bool _logFlushScheduled: false
-  property bool aboutOpened: false
   readonly property string pluginVersion: "1.0.0"
   readonly property string githubUrl: "https://github.com/DataArchitectPro/q-tasks"
 
@@ -368,8 +368,30 @@ Panel {
   property string renameFrom: ""
   property string renameTo: ""
 
-  readonly property string localeName: Qt.locale().name
-  function tr(key) { return I18n.t(key, root.localeName) }
+  readonly property string localeName: {
+    var loc = Qt.locale()
+    if (loc && loc.uiLanguages && loc.uiLanguages.length > 0)
+      return String(loc.uiLanguages[0])
+    return loc ? String(loc.name || "") : ""
+  }
+  function tr(key) { return I18n.t(key, root.localeName, root.uiLanguage) }
+
+  readonly property bool uiRussian: {
+    if (root.uiLanguage === "ru") return true
+    if (root.uiLanguage === "en") return false
+    var loc = String(root.localeName || "").toLowerCase().replace(/-/g, "_")
+    var lang = loc.split(".")[0].split("_")[0]
+    return lang === "ru"
+  }
+  // Prefer i18n; if a stale module still returns English on a Russian UI, override.
+  readonly property string tasksHeaderTitle: {
+    var s = root.tr("titleInProgress")
+    if (root.uiRussian && (s === "Tasks in progress" || s === "titleInProgress"))
+      return "Задачи в работе"
+    if (!root.uiRussian && s === "titleInProgress")
+      return "Tasks in progress"
+    return s
+  }
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(foreground, 1.45)
@@ -484,7 +506,6 @@ Panel {
     confirmDelete.opened = false
     confirmClear.opened = false
     if (confirmUnsaved) confirmUnsaved.opened = false
-    root.aboutOpened = false
     root.pendingEditorClose = null
     root.collapseComposer()
     // Closing the panel discards the open editor; ask if dirty.
@@ -641,6 +662,18 @@ Panel {
     settingsSetProc.command = [
       root.helperPath, "settings-set",
       enabled ? "--debug-logging" : "--no-debug-logging"
+    ]
+    settingsSetProc.running = true
+  }
+
+  function setUiLanguage(lang) {
+    var next = String(lang || "system")
+    if (next !== "system" && next !== "ru" && next !== "en")
+      next = "system"
+    root.uiLanguage = next
+    settingsSetProc.command = [
+      root.helperPath, "settings-set",
+      "--ui-language", next
     ]
     settingsSetProc.running = true
   }
@@ -1046,6 +1079,8 @@ Panel {
           root.debugLogging = !!data.debugLogging
           root.debugLogPath = String(data.logPath || "")
           root.debugSessionId = String(data.sessionId || "")
+          if (data.uiLanguage === "ru" || data.uiLanguage === "en" || data.uiLanguage === "system")
+            root.uiLanguage = String(data.uiLanguage)
           if (root.debugLogging)
             root.dlog("ui.settings.loaded", { sessionId: root.debugSessionId })
         } catch (e) {
@@ -1065,6 +1100,8 @@ Panel {
           root.debugLogging = !!data.debugLogging
           root.debugLogPath = String(data.logPath || "")
           root.debugSessionId = String(data.sessionId || "")
+          if (data.uiLanguage === "ru" || data.uiLanguage === "en" || data.uiLanguage === "system")
+            root.uiLanguage = String(data.uiLanguage)
           // Banner already written by helper on enable; acknowledge from UI.
           if (root.debugLogging)
             root.dlog("ui.settings.enabled", { sessionId: root.debugSessionId })
@@ -1096,14 +1133,8 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: confirmDelete.opened || confirmClear.opened || confirmUnsaved.opened || root.aboutOpened || root.formFocused || root.datePickerCount > 0
-      onCloseRequested: {
-        if (root.aboutOpened) {
-          root.aboutOpened = false
-          return
-        }
-        root.close()
-      }
+      blocked: confirmDelete.opened || confirmClear.opened || confirmUnsaved.opened || root.formFocused || root.datePickerCount > 0
+      onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onMoveRequested: function(dx, dy) {
         if (dy !== 0) root.moveCursor(dy)
@@ -1154,7 +1185,7 @@ Panel {
             spacing: Style.space(8)
 
             Text {
-              text: root.tr("title")
+              text: root.tasksHeaderTitle
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.title
@@ -1169,8 +1200,13 @@ Panel {
               font.pixelSize: Style.font.caption
               anchors.verticalCenter: parent.verticalCenter
             }
+          }
 
-            Item { width: Style.space(8); height: 1 }
+          Row {
+            id: headerRight
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(6)
 
             Button {
               text: root.tr("viewTasks")
@@ -1192,22 +1228,15 @@ Panel {
               horizontalPadding: Style.space(8)
               onClicked: root.viewMode = "projects"
             }
-          }
-
-          Row {
-            id: headerRight
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.space(6)
-
             Button {
               text: root.tr("about")
+              selected: root.viewMode === "about"
               foreground: root.foreground
               fontFamily: root.fontFamily
               fontSize: Style.font.caption
               verticalPadding: Style.space(2)
               horizontalPadding: Style.space(8)
-              onClicked: root.aboutOpened = true
+              onClicked: root.viewMode = "about"
             }
           }
         }
@@ -3236,13 +3265,19 @@ Panel {
                 ? Style.hoverFillFor(root.foreground, Color.accent)
                 : "transparent"
 
-              Row {
+              // Three aligned columns: name | rename | clear
+              RowLayout {
                 id: projRow
-                anchors.fill: parent
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
                 anchors.margins: Style.space(4)
                 spacing: Style.space(6)
 
                 Button {
+                  Layout.fillWidth: true
+                  Layout.preferredWidth: 1
+                  Layout.alignment: Qt.AlignVCenter
                   text: modelData.label
                   foreground: root.foreground
                   fontFamily: root.fontFamily
@@ -3255,9 +3290,10 @@ Panel {
                   }
                 }
 
-                Item { width: Style.space(8); height: 1 }
-
                 Button {
+                  Layout.fillWidth: true
+                  Layout.preferredWidth: 1
+                  Layout.alignment: Qt.AlignVCenter
                   visible: modelData.kind === "project"
                   text: root.tr("rename")
                   foreground: root.dim
@@ -3271,6 +3307,9 @@ Panel {
                   }
                 }
                 Button {
+                  Layout.fillWidth: true
+                  Layout.preferredWidth: 1
+                  Layout.alignment: Qt.AlignVCenter
                   visible: modelData.kind === "project"
                   text: root.tr("clearProject")
                   foreground: root.urgent
@@ -3339,6 +3378,148 @@ Panel {
             }
           }
         }
+
+        // About view — same tab pattern as Tasks / Projects
+        ColumnLayout {
+          Layout.fillWidth: true
+          Layout.fillHeight: true
+          spacing: Style.space(16)
+          visible: root.viewMode === "about"
+
+          Item { Layout.fillHeight: true; Layout.minimumHeight: Style.space(8) }
+
+          Column {
+            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
+            spacing: Style.space(16)
+
+            Text {
+              width: parent.width
+              text: root.tr("aboutTitle")
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.title
+              font.bold: true
+              wrapMode: Text.WordWrap
+              horizontalAlignment: Text.AlignHCenter
+            }
+
+            Column {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Text {
+                width: parent.width
+                text: root.tr("aboutVersion") + ": " + root.pluginVersion
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                horizontalAlignment: Text.AlignHCenter
+              }
+
+              Text {
+                width: parent.width
+                text: root.tr("aboutDeveloper") + ": " + root.tr("aboutDeveloperName")
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                horizontalAlignment: Text.AlignHCenter
+              }
+
+              Text {
+                width: parent.width
+                text: root.tr("aboutGithub") + ": " + root.githubUrl
+                color: Color.accent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WrapAnywhere
+                horizontalAlignment: Text.AlignHCenter
+
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: Qt.openUrlExternally(root.githubUrl)
+                }
+              }
+              }
+
+              Column {
+                width: Math.min(parent.width, Style.space(400))
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: Style.space(6)
+
+                Text {
+                  width: parent.width
+                  text: root.tr("uiLanguage")
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  horizontalAlignment: Text.AlignHCenter
+                }
+
+                Row {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  spacing: Style.space(4)
+
+                  Button {
+                    text: root.tr("uiLanguageSystem")
+                    selected: root.uiLanguage === "system"
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.caption
+                    verticalPadding: Style.space(2)
+                    horizontalPadding: Style.space(8)
+                    onClicked: root.setUiLanguage("system")
+                  }
+                  Button {
+                    text: root.tr("uiLanguageRu")
+                    selected: root.uiLanguage === "ru"
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.caption
+                    verticalPadding: Style.space(2)
+                    horizontalPadding: Style.space(8)
+                    onClicked: root.setUiLanguage("ru")
+                  }
+                  Button {
+                    text: root.tr("uiLanguageEn")
+                    selected: root.uiLanguage === "en"
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.caption
+                    verticalPadding: Style.space(2)
+                    horizontalPadding: Style.space(8)
+                    onClicked: root.setUiLanguage("en")
+                  }
+                }
+              }
+
+            Toggle {
+              width: Math.min(parent.width, Style.space(400))
+              anchors.horizontalCenter: parent.horizontalCenter
+              label: root.debugLogging ? root.tr("debugLogOn") : root.tr("debugLogOff")
+              description: root.debugLogPath || "~/.local/share/q.tasks/debug.log"
+              checked: root.debugLogging
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              titleSize: Style.font.body
+              descriptionSize: Style.font.caption
+              onClicked: root.setDebugLogging(!root.debugLogging)
+            }
+
+            Text {
+              width: parent.width
+              text: root.tr("debugLogHint")
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+              horizontalAlignment: Text.AlignHCenter
+            }
+          }
+
+          Item { Layout.fillHeight: true; Layout.minimumHeight: Style.space(8) }
+        }
       }
 
       ConfirmDialog {
@@ -3365,126 +3546,6 @@ Panel {
         fontFamily: root.fontFamily
         onCanceled: { opened = false; root.pendingClearProject = "" }
         onConfirmed: root.confirmClearProjectAction()
-      }
-
-      // About + debug logging
-      Item {
-        id: aboutDialog
-        anchors.fill: parent
-        visible: root.aboutOpened
-        z: 20
-
-        Rectangle {
-          anchors.fill: parent
-          color: Util.alpha(Color.background, 0.7)
-          MouseArea {
-            anchors.fill: parent
-            onClicked: root.aboutOpened = false
-          }
-
-          BorderSurface {
-            id: aboutCard
-            width: Math.min(parent.width - Style.space(32), Style.space(420))
-            height: aboutInner.implicitHeight
-              + aboutCard.contentTopInset + aboutCard.contentBottomInset
-            anchors.centerIn: parent
-            color: Color.popups.background
-            borderSpec: Border.flat(Color.accent, Style.normalBorderWidth)
-            padding: Style.space(24)
-            radius: Style.cornerRadius
-
-            MouseArea { anchors.fill: parent; onClicked: {} }
-
-            Column {
-              id: aboutInner
-              x: aboutCard.contentLeftInset
-              y: aboutCard.contentTopInset
-              width: aboutCard.width - aboutCard.contentLeftInset - aboutCard.contentRightInset
-              spacing: Style.space(16)
-
-              Text {
-                width: parent.width
-                text: root.tr("aboutTitle")
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.title
-                font.bold: true
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
-              }
-
-              Column {
-                width: parent.width
-                spacing: Style.space(6)
-
-                Text {
-                  width: parent.width
-                  text: root.tr("aboutVersion") + ": " + root.pluginVersion
-                  color: root.dim
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  horizontalAlignment: Text.AlignHCenter
-                }
-
-                Text {
-                  width: parent.width
-                  text: root.tr("aboutDeveloper") + ": " + root.tr("aboutDeveloperName")
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  horizontalAlignment: Text.AlignHCenter
-                }
-
-                Text {
-                  width: parent.width
-                  text: root.tr("aboutGithub") + ": " + root.githubUrl
-                  color: Color.accent
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  wrapMode: Text.WrapAnywhere
-                  horizontalAlignment: Text.AlignHCenter
-
-                  MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: Qt.openUrlExternally(root.githubUrl)
-                  }
-                }
-              }
-
-              Toggle {
-                width: parent.width
-                label: root.debugLogging ? root.tr("debugLogOn") : root.tr("debugLogOff")
-                description: root.debugLogPath || "~/.local/share/q.tasks/debug.log"
-                checked: root.debugLogging
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                titleSize: Style.font.body
-                descriptionSize: Style.font.caption
-                onClicked: root.setDebugLogging(!root.debugLogging)
-              }
-
-              Text {
-                width: parent.width
-                text: root.tr("debugLogHint")
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
-              }
-
-              Button {
-                anchors.horizontalCenter: parent.horizontalCenter
-                text: root.tr("aboutClose")
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                fontSize: Style.font.caption
-                onClicked: root.aboutOpened = false
-              }
-            }
-          }
-        }
       }
 
       // Unsaved editor changes: Save / Continue / Discard
@@ -3627,7 +3688,7 @@ Panel {
     function toggle(): void { root.toggle() }
     function about(): void {
       root.openFromHotkey()
-      root.aboutOpened = true
+      root.viewMode = "about"
     }
   }
 

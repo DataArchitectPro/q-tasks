@@ -376,18 +376,32 @@ def ensure_data_dir() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _normalize_ui_language(value: Any) -> str:
+    lang = str(value or "system").strip().lower()
+    if lang in ("system", "ru", "en"):
+        return lang
+    return "system"
+
+
 def load_ui_settings() -> dict[str, Any]:
     ensure_data_dir()
+    defaults = {
+        "debugLogging": False,
+        "sessionId": "",
+        "sessionStartedAt": "",
+        "uiLanguage": "system",
+    }
     try:
         data = json.loads(UI_SETTINGS_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, TypeError):
-        return {"debugLogging": False, "sessionId": "", "sessionStartedAt": ""}
+        return dict(defaults)
     if not isinstance(data, dict):
-        return {"debugLogging": False, "sessionId": "", "sessionStartedAt": ""}
+        return dict(defaults)
     return {
         "debugLogging": bool(data.get("debugLogging")),
         "sessionId": str(data.get("sessionId") or ""),
         "sessionStartedAt": str(data.get("sessionStartedAt") or ""),
+        "uiLanguage": _normalize_ui_language(data.get("uiLanguage")),
     }
 
 
@@ -473,23 +487,36 @@ def cmd_settings_get(_: argparse.Namespace) -> int:
             "debugLogging": bool(s.get("debugLogging")),
             "sessionId": s.get("sessionId") or "",
             "sessionStartedAt": s.get("sessionStartedAt") or "",
+            "uiLanguage": _normalize_ui_language(s.get("uiLanguage")),
             "logPath": str(DEBUG_LOG_PATH),
         }
     )
 
 
 def cmd_settings_set(args: argparse.Namespace) -> int:
-    enabled = bool(getattr(args, "debug_logging", False))
-    if enabled:
-        s = begin_debug_session()
-    else:
-        s = end_debug_session()
+    dbg = getattr(args, "debug_logging", None)
+    lang = getattr(args, "ui_language", None)
+    if dbg is None and lang is None:
+        return err_json("pass --debug-logging/--no-debug-logging and/or --ui-language")
+
+    if dbg is True:
+        begin_debug_session()
+    elif dbg is False:
+        end_debug_session()
+
+    if lang is not None:
+        s = load_ui_settings()
+        s["uiLanguage"] = _normalize_ui_language(lang)
+        save_ui_settings(s)
+
+    s = load_ui_settings()
     return ok_json(
         {
             "ok": True,
             "debugLogging": bool(s.get("debugLogging")),
             "sessionId": s.get("sessionId") or "",
             "sessionStartedAt": s.get("sessionStartedAt") or "",
+            "uiLanguage": _normalize_ui_language(s.get("uiLanguage")),
             "logPath": str(DEBUG_LOG_PATH),
         }
     )
@@ -1219,7 +1246,13 @@ def main() -> int:
 
     p_sg = sub.add_parser("settings-get")
     p_ss = sub.add_parser("settings-set")
-    p_ss.add_argument("--debug-logging", action=argparse.BooleanOptionalAction, required=True)
+    p_ss.add_argument("--debug-logging", action=argparse.BooleanOptionalAction, default=None)
+    p_ss.add_argument(
+        "--ui-language",
+        default=None,
+        choices=["system", "ru", "en"],
+        help="UI language: system, ru, or en",
+    )
 
     p_dl = sub.add_parser("debug-log")
     p_dl.add_argument("--event", required=True)

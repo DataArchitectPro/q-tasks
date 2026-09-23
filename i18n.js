@@ -1,21 +1,38 @@
 // Locale-aware strings for q.tasks. Russian when system locale is ru*, else English.
 
 function isRussian(localeName) {
-  var name = String(localeName || "")
-  if (!name) {
-    try {
-      name = Qt.locale().name
-    } catch (e) {
-      name = ""
+  var candidates = []
+  if (localeName !== undefined && localeName !== null && String(localeName) !== "")
+    candidates.push(String(localeName))
+  try {
+    var loc = Qt.locale()
+    if (loc) {
+      if (loc.name) candidates.push(String(loc.name))
+      // Prefer the first UI language (e.g. "ru-RU", "ru") when set.
+      var ui = loc.uiLanguages
+      if (ui && ui.length > 0) candidates.push(String(ui[0]))
     }
+  } catch (e) {}
+
+  for (var i = 0; i < candidates.length; i++) {
+    var raw = String(candidates[i] || "").toLowerCase().replace(/-/g, "_")
+    if (!raw) continue
+    // "ru", "ru_RU", "ru_RU.UTF-8", "ru.utf8"
+    var lang = raw.split(".")[0].split("_")[0]
+    if (lang === "ru") return true
   }
-  return name.toLowerCase().indexOf("ru") === 0
+  return false
 }
 
-function t(key, localeName) {
-  var ru = isRussian(localeName)
+function t(key, localeName, uiLanguage) {
+  var mode = String(uiLanguage || "system").toLowerCase()
+  var ru
+  if (mode === "ru") ru = true
+  else if (mode === "en") ru = false
+  else ru = isRussian(localeName)
   var en = {
     title: "Tasks",
+    titleInProgress: "Tasks in progress",
     projects: "Projects",
     filterAll: "All",
     filterActive: "Active",
@@ -136,9 +153,14 @@ function t(key, localeName) {
     debugLogOn: "Debug log: ON",
     debugLogOff: "Debug log: OFF",
     debugLogHint: "Writes diagnostic events to a local log file",
+    uiLanguage: "Interface language",
+    uiLanguageSystem: "System",
+    uiLanguageRu: "Русский",
+    uiLanguageEn: "English",
   }
   var ruMap = {
     title: "Задачи",
+    titleInProgress: "Задачи в работе",
     projects: "Проекты",
     filterAll: "Все",
     filterActive: "Активные",
@@ -259,6 +281,10 @@ function t(key, localeName) {
     debugLogOn: "Отладка: ВКЛ",
     debugLogOff: "Отладка: ВЫКЛ",
     debugLogHint: "Пишет диагностические события в локальный файл",
+    uiLanguage: "Язык интерфейса",
+    uiLanguageSystem: "Системный",
+    uiLanguageRu: "Русский",
+    uiLanguageEn: "English",
   }
   var map = ru ? ruMap : en
   return map[key] !== undefined ? map[key] : (en[key] !== undefined ? en[key] : key)

@@ -115,6 +115,14 @@ omarchy restart shell
 
 Saved files under `~/.config/omarchy/plugins/` are hot-reloaded by the shell; a full restart is only needed if something fails to apply.
 
+## Uninstall
+
+```bash
+omarchy plugin remove q.tasks
+```
+
+This disables the widget and deletes the git checkout under `~/.config/omarchy/plugins/q.tasks`. Your Taskwarrior / Timewarrior data is not removed.
+
 ## Usage
 
 1. Left-click the tasks icon on the bar to open the panel.

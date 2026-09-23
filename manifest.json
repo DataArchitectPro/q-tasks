@@ -3,7 +3,8 @@
   "id": "q.tasks",
   "name": "Tasks",
   "version": "1.0.0",
-  "author": "q",
+  "author": "DataArchitectPro",
+  "license": "MIT",
   "description": "Taskwarrior + Timewarrior panel: list, CRUD, projects, deps, timers",
   "kinds": [
     "bar-widget"

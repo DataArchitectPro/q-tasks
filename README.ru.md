@@ -115,6 +115,14 @@ omarchy restart shell
 
 Файлы в `~/.config/omarchy/plugins/` подхватываются shell при сохранении; полный перезапуск нужен только если изменения не применились.
 
+## Удаление
+
+```bash
+omarchy plugin remove q.tasks
+```
+
+Виджет отключается, каталог `~/.config/omarchy/plugins/q.tasks` удаляется. Данные Taskwarrior / Timewarrior не трогаются.
+
 ## Использование
 
 1. ЛКМ по иконке задач на панели — открыть окно.
