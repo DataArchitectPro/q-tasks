@@ -69,7 +69,7 @@ The plugin does not install system packages itself. On Arch Linux the package na
 Preferred — Omarchy clones and enables the plugin for you:
 
 ```bash
-omarchy plugin add https://github.com/DataArchitectPro/q-tasks.git --enable --yes
+omarchy plugin add https://github.com/DataArchitectPro/taskwarrior-time.git --enable --yes
 ```
 
 Then place the widget on the bar if it is not already there (the installer may ask for a section), or add it manually:
@@ -149,8 +149,8 @@ To turn logging off, open the **About** tab again and toggle it back to OFF (or 
 
 If you hit a bug, a crash, wrong Taskwarrior/Timewarrior behavior, or a missing feature:
 
-1. Check [existing issues](https://github.com/DataArchitectPro/q-tasks/issues).
-2. Open a [new issue](https://github.com/DataArchitectPro/q-tasks/issues/new) with:
+1. Check [existing issues](https://github.com/DataArchitectPro/taskwarrior-time/issues).
+2. Open a [new issue](https://github.com/DataArchitectPro/taskwarrior-time/issues/new) with:
    - Omarchy / Taskwarrior Time version (see About)
    - Steps to reproduce
    - Expected vs actual behavior
@@ -164,4 +164,4 @@ Please do **not** paste secrets, tokens, or private task content.
 
 ## Author
 
-**DataArchitectPro** — [GitHub repository](https://github.com/DataArchitectPro/q-tasks)
+**DataArchitectPro** — [GitHub repository](https://github.com/DataArchitectPro/taskwarrior-time)

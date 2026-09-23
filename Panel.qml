@@ -68,7 +68,7 @@ Panel {
   property var _logQueue: []
   property bool _logFlushScheduled: false
   readonly property string pluginVersion: "1.0.0"
-  readonly property string githubUrl: "https://github.com/DataArchitectPro/q-tasks"
+  readonly property string githubUrl: "https://github.com/DataArchitectPro/taskwarrior-time"
 
   readonly property bool editDirty: {
     // Touch every draft field so the binding re-evaluates on edits.

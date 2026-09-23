@@ -69,7 +69,7 @@
 Предпочтительно — Omarchy сам клонирует и включает плагин:
 
 ```bash
-omarchy plugin add https://github.com/DataArchitectPro/q-tasks.git --enable --yes
+omarchy plugin add https://github.com/DataArchitectPro/taskwarrior-time.git --enable --yes
 ```
 
 Затем поместите виджет на панель, если его ещё нет (установщик может спросить секцию), или вручную:
@@ -149,8 +149,8 @@ omarchy plugin remove q.tasks
 
 Если нашли баг, падение, неверное поведение Taskwarrior/Timewarrior или хотите предложить функцию:
 
-1. Посмотрите [существующие issues](https://github.com/DataArchitectPro/q-tasks/issues).
-2. Создайте [новый issue](https://github.com/DataArchitectPro/q-tasks/issues/new) и укажите:
+1. Посмотрите [существующие issues](https://github.com/DataArchitectPro/taskwarrior-time/issues).
+2. Создайте [новый issue](https://github.com/DataArchitectPro/taskwarrior-time/issues/new) и укажите:
    - версию Omarchy / Taskwarrior Time (см. О плагине)
    - шаги воспроизведения
    - ожидаемое и фактическое поведение
@@ -164,4 +164,4 @@ omarchy plugin remove q.tasks
 
 ## Автор
 
-**DataArchitectPro** — [репозиторий на GitHub](https://github.com/DataArchitectPro/q-tasks)
+**DataArchitectPro** — [репозиторий на GitHub](https://github.com/DataArchitectPro/taskwarrior-time)
