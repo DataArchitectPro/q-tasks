@@ -8,7 +8,7 @@
 
 ## What this is
 
-**Taskwarrior Time** (plugin id `q.tasks`) is a **GUI companion** for the classic CLI task stack — not a separate task database.
+**Taskwarrior Time** (plugin id `taskwarrior-time`) is a **GUI companion** for the classic CLI task stack — not a separate task database.
 
 | Component | Role |
 | --- | --- |
@@ -75,7 +75,7 @@ omarchy plugin add https://github.com/DataArchitectPro/taskwarrior-time.git --en
 Then place the widget on the bar if it is not already there (the installer may ask for a section), or add it manually:
 
 ```bash
-omarchy bar move q.tasks --section right
+omarchy bar move taskwarrior-time --section right
 ```
 
 Reload the shell if the icon does not appear:
@@ -86,27 +86,27 @@ omarchy restart shell
 
 ### Developer checkout
 
-For local development, place or clone this repository at `~/.config/omarchy/plugins/q.tasks`, then:
+For local development, place or clone this repository at `~/.config/omarchy/plugins/taskwarrior-time`, then:
 
 ```bash
-omarchy plugin enable q.tasks --section right
+omarchy plugin enable taskwarrior-time --section right
 omarchy restart shell
 ```
 
-The plugin id is `q.tasks` (folder name under `~/.config/omarchy/plugins/`). The marketplace display name is **Taskwarrior Time**.
+The plugin id is `taskwarrior-time` (folder name under `~/.config/omarchy/plugins/`). The marketplace display name is **Taskwarrior Time**.
 
 ## Update
 
 If the plugin was installed with `omarchy plugin add` (git remote present):
 
 ```bash
-omarchy plugin update q.tasks --yes
+omarchy plugin update taskwarrior-time --yes
 ```
 
 Or manually:
 
 ```bash
-git -C ~/.config/omarchy/plugins/q.tasks pull --ff-only
+git -C ~/.config/omarchy/plugins/taskwarrior-time pull --ff-only
 omarchy restart shell
 ```
 
@@ -115,10 +115,10 @@ Saved files under `~/.config/omarchy/plugins/` are hot-reloaded by the shell; a 
 ## Uninstall
 
 ```bash
-omarchy plugin remove q.tasks
+omarchy plugin remove taskwarrior-time
 ```
 
-This disables the widget and deletes the git checkout under `~/.config/omarchy/plugins/q.tasks`. Your Taskwarrior / Timewarrior data is not removed.
+This disables the widget and deletes the git checkout under `~/.config/omarchy/plugins/taskwarrior-time`. Your Taskwarrior / Timewarrior data is not removed.
 
 ## Usage
 
@@ -139,9 +139,9 @@ When something misbehaves, turn on debug logging from the **About** tab.
 - While enabled, the bar icon stays highlighted and the tooltip shows that logging is active.
 - Events are appended to:
 
-  `~/.local/share/q.tasks/debug.log`
+  `~/.local/share/taskwarrior-time/debug.log`
 
-The log is local only (it is not uploaded). Include relevant excerpts when you open a GitHub issue — they help reproduce UI and helper (`bin/q-tasks`) problems.
+The log is local only (it is not uploaded). Include relevant excerpts when you open a GitHub issue — they help reproduce UI and helper (`bin/taskwarrior-time`) problems.
 
 To turn logging off, open the **About** tab again and toggle it back to OFF (or delete/ignore the log file; the toggle controls whether new events are written).
 
@@ -154,7 +154,7 @@ If you hit a bug, a crash, wrong Taskwarrior/Timewarrior behavior, or a missing 
    - Omarchy / Taskwarrior Time version (see About)
    - Steps to reproduce
    - Expected vs actual behavior
-   - Optional: a redacted snippet from `~/.local/share/q.tasks/debug.log`
+   - Optional: a redacted snippet from `~/.local/share/taskwarrior-time/debug.log`
 
 Please do **not** paste secrets, tokens, or private task content.
 

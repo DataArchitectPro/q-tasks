@@ -8,7 +8,7 @@
 
 ## Что это такое
 
-**Taskwarrior Time** (id плагина `q.tasks`) — **графическая надстройка** над привычным консольным стеком задач, а не отдельная база.
+**Taskwarrior Time** (id плагина `taskwarrior-time`) — **графическая надстройка** над привычным консольным стеком задач, а не отдельная база.
 
 | Компонент | Роль |
 | --- | --- |
@@ -75,7 +75,7 @@ omarchy plugin add https://github.com/DataArchitectPro/taskwarrior-time.git --en
 Затем поместите виджет на панель, если его ещё нет (установщик может спросить секцию), или вручную:
 
 ```bash
-omarchy bar move q.tasks --section right
+omarchy bar move taskwarrior-time --section right
 ```
 
 Перезапустите shell, если иконка не появилась:
@@ -86,27 +86,27 @@ omarchy restart shell
 
 ### Checkout для разработки
 
-Для локальной разработки положите или клонируйте этот репозиторий в `~/.config/omarchy/plugins/q.tasks`, затем:
+Для локальной разработки положите или клонируйте этот репозиторий в `~/.config/omarchy/plugins/taskwarrior-time`, затем:
 
 ```bash
-omarchy plugin enable q.tasks --section right
+omarchy plugin enable taskwarrior-time --section right
 omarchy restart shell
 ```
 
-Идентификатор плагина — `q.tasks` (имя папки в `~/.config/omarchy/plugins/`). Отображаемое имя в marketplace — **Taskwarrior Time**.
+Идентификатор плагина — `taskwarrior-time` (имя папки в `~/.config/omarchy/plugins/`). Отображаемое имя в marketplace — **Taskwarrior Time**.
 
 ## Обновление
 
 Если плагин ставили через `omarchy plugin add` (есть git remote):
 
 ```bash
-omarchy plugin update q.tasks --yes
+omarchy plugin update taskwarrior-time --yes
 ```
 
 Или вручную:
 
 ```bash
-git -C ~/.config/omarchy/plugins/q.tasks pull --ff-only
+git -C ~/.config/omarchy/plugins/taskwarrior-time pull --ff-only
 omarchy restart shell
 ```
 
@@ -115,10 +115,10 @@ omarchy restart shell
 ## Удаление
 
 ```bash
-omarchy plugin remove q.tasks
+omarchy plugin remove taskwarrior-time
 ```
 
-Виджет отключается, каталог `~/.config/omarchy/plugins/q.tasks` удаляется. Данные Taskwarrior / Timewarrior не трогаются.
+Виджет отключается, каталог `~/.config/omarchy/plugins/taskwarrior-time` удаляется. Данные Taskwarrior / Timewarrior не трогаются.
 
 ## Использование
 
@@ -139,9 +139,9 @@ omarchy plugin remove q.tasks
 - Пока лог включён, иконка на панели подсвечивается, в подсказке видно, что логирование активно.
 - События пишутся в:
 
-  `~/.local/share/q.tasks/debug.log`
+  `~/.local/share/taskwarrior-time/debug.log`
 
-Лог только локальный (никуда не отправляется). При создании issue на GitHub полезно приложить релевантные фрагменты — так проще воспроизвести проблемы UI и хелпера (`bin/q-tasks`).
+Лог только локальный (никуда не отправляется). При создании issue на GitHub полезно приложить релевантные фрагменты — так проще воспроизвести проблемы UI и хелпера (`bin/taskwarrior-time`).
 
 Чтобы выключить лог, снова откройте вкладку **О плагине** и переведите переключатель в ВЫКЛ.
 
@@ -154,7 +154,7 @@ omarchy plugin remove q.tasks
    - версию Omarchy / Taskwarrior Time (см. О плагине)
    - шаги воспроизведения
    - ожидаемое и фактическое поведение
-   - по желанию: обезличенный фрагмент из `~/.local/share/q.tasks/debug.log`
+   - по желанию: обезличенный фрагмент из `~/.local/share/taskwarrior-time/debug.log`
 
 Пожалуйста, **не** прикладывайте секреты, токены и приватное содержимое задач.
 

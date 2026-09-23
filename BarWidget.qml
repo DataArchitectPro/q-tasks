@@ -5,7 +5,7 @@ import qs.Ui
 
 BarWidget {
   id: root
-  moduleName: "q.tasks"
+  moduleName: "taskwarrior-time"
 
   readonly property bool showWhenEmpty: setting("showWhenEmpty", true) === true
   readonly property int refreshIntervalSec: Math.max(5, Number(setting("refreshIntervalSec", 30)) || 30)
@@ -66,7 +66,7 @@ BarWidget {
     else if (tip.indexOf("Taskwarrior Time") !== 0)
       tip = "Taskwarrior Time · " + tip
     if (root.debugLogging)
-      tip = tip + "\nDebug log ON → " + (root.debugLogPath || "~/.local/share/q.tasks/debug.log")
+      tip = tip + "\nDebug log ON → " + (root.debugLogPath || "~/.local/share/taskwarrior-time/debug.log")
     root.pillTooltip = tip
   }
 

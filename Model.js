@@ -1,4 +1,4 @@
-// Filtering, grouping, and date helpers for Taskwarrior Time (q.tasks).
+// Filtering, grouping, and date helpers for Taskwarrior Time (taskwarrior-time).
 
 function parseTwDate(s) {
   if (!s) return null

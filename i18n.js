@@ -1,4 +1,4 @@
-// Locale-aware strings for Taskwarrior Time (plugin id: q.tasks).
+// Locale-aware strings for Taskwarrior Time (plugin id: taskwarrior-time).
 
 function isRussian(localeName) {
   var candidates = []

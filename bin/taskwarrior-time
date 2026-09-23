@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Taskwarrior Time helper — JSON bridge between Omarchy Quickshell UI and task/timew.
 
-Plugin id: q.tasks
+Plugin id: taskwarrior-time
 """
 
 from __future__ import annotations
@@ -439,14 +439,14 @@ def list_projects() -> list[str]:
     return uniq[:MAX_PROJECTS]
 
 
-EXTRA_PROJECTS_PATH = Path.home() / ".local" / "share" / "q.tasks" / "extra-projects.json"
-DATA_DIR = Path.home() / ".local" / "share" / "q.tasks"
+EXTRA_PROJECTS_PATH = Path.home() / ".local" / "share" / "taskwarrior-time" / "extra-projects.json"
+DATA_DIR = Path.home() / ".local" / "share" / "taskwarrior-time"
 UI_SETTINGS_PATH = DATA_DIR / "ui-settings.json"
 DEBUG_LOG_PATH = DATA_DIR / "debug.log"
 DEBUG_LOG_MAX_BYTES = 2 * 1024 * 1024
 # Legacy path inside the plugin dir triggered Omarchy hot-reload on every write.
 _LEGACY_EXTRA_PROJECTS_PATH = (
-    Path.home() / ".config" / "omarchy" / "plugins" / "q.tasks" / "extra-projects.json"
+    Path.home() / ".config" / "omarchy" / "plugins" / "taskwarrior-time" / "extra-projects.json"
 )
 
 
@@ -1292,7 +1292,7 @@ def cmd_time(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(prog="q-tasks")
+    parser = argparse.ArgumentParser(prog="taskwarrior-time")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("export")

@@ -10,8 +10,8 @@ import "i18n.js" as I18n
 
 Panel {
   id: root
-  moduleName: "q.tasks"
-  ipcTarget: "q.tasks"
+  moduleName: "taskwarrior-time"
+  ipcTarget: "taskwarrior-time"
   manageIpc: false
 
   property var anchorItem: null
@@ -397,7 +397,7 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   readonly property string helperPath: {
-    var value = String(Qt.resolvedUrl("bin/q-tasks"))
+    var value = String(Qt.resolvedUrl("bin/taskwarrior-time"))
     if (value.indexOf("file://") === 0) return decodeURIComponent(value.substring(7))
     return value
   }
@@ -586,7 +586,7 @@ Panel {
       root._preserveContentY = -1
       root.lastError = String(e)
       root.dlog("snapshot.error", { error: String(e) })
-      console.warn("q.tasks: bad JSON", e)
+      console.warn("taskwarrior-time: bad JSON", e)
     }
   }
 
@@ -1104,7 +1104,7 @@ Panel {
           if (root.debugLogging)
             root.dlog("ui.settings.loaded", { sessionId: root.debugSessionId })
         } catch (e) {
-          console.warn("q.tasks: settings-get", e)
+          console.warn("taskwarrior-time: settings-get", e)
         }
       }
     }
@@ -1126,7 +1126,7 @@ Panel {
           if (root.debugLogging)
             root.dlog("ui.settings.enabled", { sessionId: root.debugSessionId })
         } catch (e) {
-          console.warn("q.tasks: settings-set", e)
+          console.warn("taskwarrior-time: settings-set", e)
         }
       }
     }
@@ -3580,7 +3580,7 @@ Panel {
               width: Math.min(parent.width, Style.space(400))
               anchors.horizontalCenter: parent.horizontalCenter
               label: root.debugLogging ? root.tr("debugLogOn") : root.tr("debugLogOff")
-              description: root.debugLogPath || "~/.local/share/q.tasks/debug.log"
+              description: root.debugLogPath || "~/.local/share/taskwarrior-time/debug.log"
               checked: root.debugLogging
               foreground: root.foreground
               fontFamily: root.fontFamily
@@ -3766,7 +3766,7 @@ Panel {
   }
 
   IpcHandler {
-    target: "q.tasks"
+    target: "taskwarrior-time"
     function refresh(): void { root.refresh() }
     function open(): void { root.openFromHotkey() }
     function close(): void { root.close() }

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "q.tasks",
+  "id": "taskwarrior-time",
   "name": "Taskwarrior Time",
   "version": "1.0.0",
   "author": "DataArchitectPro",
