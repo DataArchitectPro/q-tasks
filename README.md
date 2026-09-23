@@ -4,7 +4,7 @@
 
 Bar widget for [Omarchy](https://omarchy.org/) that brings **Taskwarrior** and **Timewarrior** into the shell panel. Create, edit, filter, and time-track tasks without leaving the desktop.
 
-![q.tasks panel](preview.png)
+![q.tasks panel](docs/screenshots/en/00-hero.png)
 
 ## What this is
 
@@ -25,32 +25,36 @@ Anything you do here is stored in your normal Taskwarrior / Timewarrior data. Yo
 - **Schedule** fields (scheduled / due), **dependencies** (depends / blocks), and **Timewarrior** timers with manual time adjust
 - **Projects** view: browse projects, rename, clear project from tasks
 - **Unsaved changes** dialog when closing a dirty editor (Save / Keep editing / Discard)
-- **i18n**: English and Russian UI (follows system locale)
-- **About** dialog with version, developer info, GitHub link, and debug logging toggle
+- **i18n**: English and Russian UI (system language, or pick one in About)
+- **About** tab with version, developer info, GitHub link, language switch, and debug logging toggle
+
+### Task list
+
+![Task list](docs/screenshots/en/01-panel-list.png)
 
 ### Filter & search
 
 Expand **Filter** to narrow by status, project, priority, due, timer, and dependencies, plus a free-text search over descriptions.
 
-![Advanced filter](docs/screenshots/04-filter.png)
+![Advanced filter](docs/screenshots/en/04-filter.png)
 
 ### New task composer
 
 The sticky composer at the bottom expands into the same field layout as the editor: details, status, waiting-for, priority, project, and optional schedule / deps / time.
 
-![New task form](docs/screenshots/05-new-task.png)
+![New task form](docs/screenshots/en/05-new-task.png)
 
 ### Task editor
 
 Click a task to edit it in place. Save when dirty, Cancel to collapse, or Delete.
 
-![Task editor](docs/screenshots/02-panel-edit.png)
+![Task editor](docs/screenshots/en/02-panel-edit.png)
 
 ### Projects
 
 Switch to **Projects** to list projects, rename them, clear a project from all tasks, or add a new one.
 
-![Projects view](docs/screenshots/06-projects.png)
+![Projects view](docs/screenshots/en/06-projects.png)
 
 ## Requirements
 
@@ -118,15 +122,15 @@ Saved files under `~/.config/omarchy/plugins/` are hot-reloaded by the shell; a 
 3. Expand **Filter** when you need status / project / priority / due / timer / deps or search.
 4. Click a task to expand the editor; **Save**, **Cancel**, or **Delete** at the bottom of the card.
 5. Focus the composer at the bottom to add a new task with the full form.
-6. Open **About** (`О плагине`) in the header for version info, GitHub, and debug logging.
+6. Open **About** in the header tabs for version info, GitHub, and debug logging.
 
-![About & debug](docs/screenshots/03-about.png)
+![About & debug](docs/screenshots/en/03-about.png)
 
 ## Debug logging
 
-When something misbehaves, turn on debug logging from **About** in the panel header.
+When something misbehaves, turn on debug logging from the **About** tab.
 
-- Toggle **Debug log: ON / OFF** in the About dialog.
+- Toggle **Debug log: ON / OFF** on the About tab.
 - While enabled, the bar icon stays highlighted and the tooltip shows that logging is active.
 - Events are appended to:
 
@@ -134,7 +138,7 @@ When something misbehaves, turn on debug logging from **About** in the panel hea
 
 The log is local only (it is not uploaded). Include relevant excerpts when you open a GitHub issue — they help reproduce UI and helper (`bin/q-tasks`) problems.
 
-To turn logging off, open About again and toggle it back to OFF (or delete/ignore the log file; the toggle controls whether new events are written).
+To turn logging off, open the **About** tab again and toggle it back to OFF (or delete/ignore the log file; the toggle controls whether new events are written).
 
 ## Reporting issues
 
