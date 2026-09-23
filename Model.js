@@ -2,27 +2,24 @@
 
 function parseTwDate(s) {
   if (!s) return null
-  var str = String(s)
+  var str = String(s).trim()
   // 20260922T190000Z
   var m = str.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/)
   if (m) {
     return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]))
   }
+  // UI: DD.MM.YYYY[ HH:MM[:SS]]
+  m = str.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/)
+  if (m) {
+    return new Date(+m[3], +m[2] - 1, +m[1], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0))
+  }
+  // Wire / legacy UI: YYYY-MM-DD[THH:mm[:ss]]
+  m = str.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?$/)
+  if (m) {
+    return new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0))
+  }
   var d = new Date(str)
   return isNaN(d.getTime()) ? null : d
-}
-
-function formatShortDate(s, localeName) {
-  var d = parseTwDate(s)
-  if (!d) return ""
-  try {
-    return Qt.formatDate(d, "yyyy-MM-dd")
-  } catch (e) {
-    var y = d.getFullYear()
-    var mo = ("0" + (d.getMonth() + 1)).slice(-2)
-    var da = ("0" + d.getDate()).slice(-2)
-    return y + "-" + mo + "-" + da
-  }
 }
 
 function pad2(n) {
@@ -30,14 +27,41 @@ function pad2(n) {
   return (n < 10 ? "0" : "") + n
 }
 
+// Display date only: DD.MM.YYYY
+function formatShortDate(s, localeName) {
+  var d = parseTwDate(s)
+  if (!d) return ""
+  return pad2(d.getDate()) + "." + pad2(d.getMonth() + 1) + "." + d.getFullYear()
+}
+
+// Display datetime for editors: DD.MM.YYYY or DD.MM.YYYY HH:MM:SS
 function formatEditableDateTime(s) {
   var d = parseTwDate(s)
   if (!d) return ""
   var ymd = formatShortDate(s)
   var h = d.getHours()
   var m = d.getMinutes()
-  if (h === 0 && m === 0) return ymd
-  return ymd + "T" + pad2(h) + ":" + pad2(m)
+  var sec = d.getSeconds()
+  if (h === 0 && m === 0 && sec === 0) return ymd
+  return ymd + " " + pad2(h) + ":" + pad2(m) + ":" + pad2(sec)
+}
+
+// Convert UI / natural text to Taskwarrior wire (Y-M-D). Pass through
+// relative phrases (today, tomorrow, …) unchanged so TW can resolve them.
+function toWireDateTime(text) {
+  var s = String(text || "").trim()
+  if (!s) return ""
+  var numeric = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/)
+    || s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?$/)
+  if (!numeric) return s
+  var d = parseTwDate(s)
+  if (!d) return s
+  var ymd = d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate())
+  var h = d.getHours()
+  var m = d.getMinutes()
+  var sec = d.getSeconds()
+  if (h === 0 && m === 0 && sec === 0) return ymd
+  return ymd + "T" + pad2(h) + ":" + pad2(m) + ":" + pad2(sec)
 }
 
 function dateRangeLabel(task) {
@@ -46,6 +70,31 @@ function dateRangeLabel(task) {
   if (a && b) return a + " → " + b
   if (b) return "→ " + b
   if (a) return a + " →"
+  return ""
+}
+
+// List-row due chip: relative when urgent/today/tomorrow, otherwise short date.
+function dueListLabel(task, tFn) {
+  if (!task) return ""
+  var bucket = dueBucket(task)
+  if (bucket === "overdue") return tFn("dueOverdue")
+  if (bucket === "today") return tFn("dueToday")
+  if (bucket === "tomorrow") return tFn("dueTomorrow")
+  if (task.due) {
+    var due = formatShortDate(task.due)
+    if (due) return due
+  }
+  if (task.scheduled) {
+    var sched = formatShortDate(task.scheduled)
+    if (sched) return sched
+  }
+  return ""
+}
+
+function priorityLabel(priority, tFn) {
+  if (priority === "H") return tFn("priH")
+  if (priority === "M") return tFn("priM")
+  if (priority === "L") return tFn("priL")
   return ""
 }
 
@@ -62,9 +111,9 @@ function dueBucket(task) {
   var dueDay = startOfLocalDay(due)
   if (dueDay < today && task.status === "pending") return "overdue"
   if (dueDay.getTime() === today.getTime()) return "today"
-  var weekEnd = new Date(today)
-  weekEnd.setDate(weekEnd.getDate() + (7 - weekEnd.getDay()) % 7)
-  // end of week Sunday-ish; simpler: +7 days
+  var tomorrow = new Date(today)
+  tomorrow.setDate(tomorrow.getDate() + 1)
+  if (dueDay.getTime() === tomorrow.getTime()) return "tomorrow"
   var inWeek = new Date(today)
   inWeek.setDate(inWeek.getDate() + 7)
   if (dueDay < inWeek) return "week"
@@ -120,10 +169,10 @@ function matchesAdvanced(task, spec) {
   var due = String(spec.due || "")
   if (due !== "") {
     var bucket = dueBucket(task)
-    if (due === "overdue" || due === "today" || due === "week" || due === "later" || due === "none") {
+    if (due === "overdue" || due === "today" || due === "tomorrow" || due === "week" || due === "later" || due === "none") {
       if (bucket !== due) return false
     } else if (due === "soon") {
-      if (bucket !== "overdue" && bucket !== "today" && bucket !== "week") return false
+      if (bucket !== "overdue" && bucket !== "today" && bucket !== "tomorrow" && bucket !== "week") return false
     }
   }
 
@@ -167,10 +216,10 @@ function countActiveFilters(spec) {
 
 function sortTasks(tasks) {
   return tasks.slice().sort(function (a, b) {
-    var ua = Number(a.urgency) || 0
-    var ub = Number(b.urgency) || 0
-    if (ub !== ua) return ub - ua
-    return String(a.description).localeCompare(String(b.description))
+    var ia = Number(a.id) || 0
+    var ib = Number(b.id) || 0
+    if (ia !== ib) return ia - ib
+    return String(a.uuid || "").localeCompare(String(b.uuid || ""))
   })
 }
 
@@ -199,6 +248,7 @@ function groupLabel(key, groupBy, tFn) {
   if (groupBy === "due") {
     if (key === "overdue") return tFn("dueOverdue")
     if (key === "today") return tFn("dueToday")
+    if (key === "tomorrow") return tFn("dueTomorrow")
     if (key === "week") return tFn("dueWeek")
     if (key === "later") return tFn("dueLater")
     return tFn("dueNone")
@@ -207,7 +257,7 @@ function groupLabel(key, groupBy, tFn) {
 }
 
 function dueGroupOrder(key) {
-  var order = { overdue: 0, today: 1, week: 2, later: 3, none: 4 }
+  var order = { overdue: 0, today: 1, tomorrow: 2, week: 3, later: 4, none: 5 }
   return order[key] !== undefined ? order[key] : 9
 }
 
@@ -257,13 +307,13 @@ function buildGroups(tasks, filter, groupBy, tFn) {
 }
 
 function datesValid(scheduled, due) {
-  function datePrefix(s) {
-    var m = String(s || "").trim().match(/^(\d{4}-\d{2}-\d{2})/)
-    return m ? m[1] : ""
+  var a = parseTwDate(scheduled)
+  var b = parseTwDate(due)
+  if (a && b) {
+    var ad = startOfLocalDay(a).getTime()
+    var bd = startOfLocalDay(b).getTime()
+    return ad <= bd
   }
-  var a = datePrefix(scheduled)
-  var b = datePrefix(due)
-  if (a && b) return a <= b
   return true
 }
 

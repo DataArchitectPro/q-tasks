@@ -6,7 +6,7 @@ import qs.Ui
 import "DateTimeModel.js" as DT
 
 // Text field + calendar/time popup. Keyboard entry stays primary;
-// the picker writes YYYY-MM-DD or YYYY-MM-DDTHH:mm into the field.
+// the picker writes DD.MM.YYYY or DD.MM.YYYY HH:MM:SS into the field.
 Item {
   id: root
 
@@ -38,10 +38,11 @@ Item {
   property int viewMonth: new Date().getMonth()
   property int pickHour: 9
   property int pickMinute: 0
+  property int pickSecond: 0
   property string selectedKey: ""
   property bool _countedOpen: false
 
-  readonly property string todayKey: DT.formatDate(new Date())
+  readonly property string todayKey: DT.dateKey(new Date())
   readonly property var cells: DT.monthGrid(viewYear, viewMonth, weekStart, selectedKey, todayKey)
   readonly property var weekdayLabels: DT.weekdayLabels(weekStart, Qt.locale())
   readonly property string monthTitle: Qt.locale().standaloneMonthName(viewMonth) + " " + viewYear
@@ -62,11 +63,13 @@ Item {
     var base = parsed || new Date()
     viewYear = base.getFullYear()
     viewMonth = base.getMonth()
-    selectedKey = DT.formatDate(base)
+    selectedKey = DT.dateKey(base)
     pickHour = parsed ? base.getHours() : 9
     pickMinute = parsed ? base.getMinutes() : 0
+    pickSecond = parsed ? base.getSeconds() : 0
     hourField.value = pickHour
     minuteField.value = pickMinute
+    secondField.value = pickSecond
     popup.open()
   }
 
@@ -90,7 +93,7 @@ Item {
     if (!selectedKey) return
     var parts = selectedKey.split("-")
     if (parts.length !== 3) return
-    var d = new Date(+parts[0], +parts[1] - 1, +parts[2], pickHour, pickMinute, 0)
+    var d = new Date(+parts[0], +parts[1] - 1, +parts[2], pickHour, pickMinute, pickSecond)
     field.text = includeTime ? DT.formatDateTime(d) : DT.formatDate(d)
     popup.close()
     root.editingFinished()
@@ -105,14 +108,16 @@ Item {
 
   function pickToday() {
     var n = new Date()
-    selectedKey = DT.formatDate(n)
+    selectedKey = DT.dateKey(n)
     viewYear = n.getFullYear()
     viewMonth = n.getMonth()
     if (includeTime) {
       pickHour = n.getHours()
       pickMinute = n.getMinutes()
+      pickSecond = n.getSeconds()
       hourField.value = pickHour
       minuteField.value = pickMinute
+      secondField.value = pickSecond
     }
   }
 
@@ -137,6 +142,15 @@ Item {
       onEditingFinished: root.editingFinished()
       onActiveFocusChanged: {
         if (host) host.formFocused = activeFocus || root.popupOpen
+      }
+      Keys.onEscapePressed: function(event) {
+        if (root.popupOpen) {
+          root.discardPicker()
+          event.accepted = true
+          return
+        }
+        if (host && typeof host.dismissEscapeOverlay === "function" && host.dismissEscapeOverlay())
+          event.accepted = true
       }
     }
 
@@ -339,6 +353,29 @@ Item {
           from: 0
           to: 59
           onModified: function(v) { root.pickMinute = v }
+        }
+
+        Text {
+          textFormat: Text.PlainText
+          text: ":"
+          color: root.foreground
+          font.family: root.fontFamily
+          anchors.verticalCenter: parent.verticalCenter
+        }
+
+        NumberField {
+          id: secondField
+          label: ""
+          width: Style.space(64)
+          fieldWidth: Style.space(56)
+          foreground: root.foreground
+          accent: root.accent
+          fontFamily: root.fontFamily
+          fontSize: Style.font.caption
+          value: root.pickSecond
+          from: 0
+          to: 59
+          onModified: function(v) { root.pickSecond = v }
         }
       }
 

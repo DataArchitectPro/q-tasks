@@ -27,7 +27,8 @@ Panel {
     actionable: 0,
     active: null,
     label: "\uf0ae",
-    tooltip: ""
+    tooltip: "",
+    waiting: 0
   })
 
   property string viewMode: "tasks" // tasks | projects | about
@@ -146,6 +147,186 @@ Panel {
   property real _preserveContentY: -1
   property int dataRev: 0
   property var rows: []
+  // After a done/undone toggle, keep the task visible briefly so the user
+  // sees the new checkbox/strike state even if the filter would hide it.
+  property var doneHoldUntil: ({})
+  readonly property int doneHoldMs: 1800
+  // Theme accent (follows Omarchy / OS theme), same as other active UI chrome.
+  readonly property color doneCheckColor: Color.accent
+  readonly property real doneCheckSize: Style.font.title * 2.15
+  // Priority colors from the active Omarchy theme palette (colors.toml),
+  // same source Color.urgent / accent use — so they track OS theme switches.
+  // High=red, Mid=green, Low=blue. Due chips: today=orange, tomorrow=yellow.
+  property color themeRed: Color.urgent
+  property color themeGreen: Color.accent
+  property color themeBlue: Color.accent
+  property color themeOrange: Color.accent
+  property color themeYellow: Color.accent
+  readonly property color priorityHighColor: root.themeRed
+  readonly property color priorityMiddleColor: root.themeGreen
+  readonly property color priorityLowColor: root.themeBlue
+
+  function priorityColor(priority) {
+    if (priority === "H") return root.priorityHighColor
+    if (priority === "M") return root.priorityMiddleColor
+    if (priority === "L") return root.priorityLowColor
+    return root.dim
+  }
+
+  function dueMetaColor(task) {
+    if (!task) return root.dim
+    var bucket = Model.dueBucket(task)
+    if (bucket === "overdue") return root.urgent
+    if (bucket === "today") return root.themeOrange
+    if (bucket === "tomorrow") return root.themeYellow
+    return root.dim
+  }
+
+  // Meta strip = table columns (project flex + fixed badge tracks). Empty
+  // slots keep their width so priority/due/blocked never shift across rows.
+  FontMetrics {
+    id: metaCaptionMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.caption
+  }
+  FontMetrics {
+    id: metaPriMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.caption
+    font.bold: true
+  }
+  function metaTextWidth(metrics, text) {
+    return Math.ceil(metrics.boundingRect(String(text || "")).width)
+  }
+  readonly property real metaPriWidth: Math.max(
+    root.metaTextWidth(metaPriMetrics, root.tr("priH")),
+    root.metaTextWidth(metaPriMetrics, root.tr("priM")),
+    root.metaTextWidth(metaPriMetrics, root.tr("priL"))
+  )
+  readonly property real metaDueWidth: Math.max(
+    root.metaTextWidth(metaCaptionMetrics, root.tr("dueOverdue")),
+    root.metaTextWidth(metaCaptionMetrics, root.tr("dueToday")),
+    root.metaTextWidth(metaCaptionMetrics, root.tr("dueTomorrow")),
+    root.metaTextWidth(metaCaptionMetrics, "00.00.0000")
+  )
+  readonly property real metaBlockedWidth: root.metaTextWidth(metaCaptionMetrics, root.tr("blocked"))
+
+  function applyThemePalette(raw) {
+    var red = ""
+    var green = ""
+    var blue = ""
+    var orange = ""
+    var yellow = ""
+    var lines = String(raw || "").split("\n")
+    for (var i = 0; i < lines.length; i++) {
+      var match = lines[i].match(/^\s*([A-Za-z0-9_-]+)\s*=\s*["']?(#[0-9A-Fa-f]{6})/)
+      if (!match) continue
+      var key = match[1]
+      var val = match[2]
+      if (key === "red" || key === "color1") red = val
+      else if (key === "green" || key === "color2") green = val
+      else if (key === "blue" || key === "color4") blue = val
+      else if (key === "orange") orange = val
+      else if (key === "yellow" || key === "color3") yellow = val
+    }
+    root.themeRed = red || Color.urgent
+    root.themeGreen = green || Color.accent
+    root.themeBlue = blue || Color.accent
+    root.themeOrange = orange || yellow || Color.accent
+    root.themeYellow = yellow || orange || Color.accent
+  }
+
+  FileView {
+    id: themeColorsFile
+    path: Color.currentThemePath + "/colors.toml"
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.applyThemePalette(text())
+    onFileChanged: reload()
+    onLoadFailed: root.applyThemePalette("")
+  }
+
+  // Theme switches push colors.toml via shell IPC into Color (FileView there
+  // is startup-only). Reload our palette whenever foundational roles change.
+  Connections {
+    target: Color
+    function onUrgentChanged() { themeColorsFile.reload() }
+    function onAccentChanged() { themeColorsFile.reload() }
+    function onForegroundChanged() { themeColorsFile.reload() }
+  }
+
+  function isDoneHoldActive(uuid) {
+    var until = root.doneHoldUntil[String(uuid || "")]
+    return !!(until && Date.now() < until)
+  }
+
+  function markDoneHold(uuid) {
+    var id = String(uuid || "")
+    if (!id) return
+    var next = {}
+    var cur = root.doneHoldUntil || {}
+    for (var k in cur)
+      next[k] = cur[k]
+    next[id] = Date.now() + root.doneHoldMs
+    root.doneHoldUntil = next
+    if (doneHoldTimer)
+      doneHoldTimer.restart()
+  }
+
+  function clearDoneHold(uuid) {
+    var id = String(uuid || "")
+    var cur = root.doneHoldUntil || {}
+    if (!cur[id]) return
+    var next = {}
+    for (var k in cur)
+      if (k !== id) next[k] = cur[k]
+    root.doneHoldUntil = next
+  }
+
+  function sweepDoneHolds() {
+    var now = Date.now()
+    var cur = root.doneHoldUntil || {}
+    var next = {}
+    var expired = false
+    for (var k in cur) {
+      if (cur[k] > now)
+        next[k] = cur[k]
+      else
+        expired = true
+    }
+    if (!expired) {
+      var any = false
+      for (var _ in next) { any = true; break }
+      if (!any && doneHoldTimer)
+        doneHoldTimer.stop()
+      return
+    }
+    root.doneHoldUntil = next
+    root.rebuildRows(true)
+    var left = false
+    for (var __ in next) { left = true; break }
+    if (!left && doneHoldTimer)
+      doneHoldTimer.stop()
+  }
+
+  function applyLocalTaskStatus(uuid, status) {
+    var id = String(uuid || "")
+    if (!id) return
+    function patch(t) {
+      if (!t || String(t.uuid) !== id) return
+      t.status = status
+      if (status === "completed")
+        t.timerActive = false
+    }
+    var tasks = (root.snapshot && root.snapshot.tasks) ? root.snapshot.tasks : []
+    for (var i = 0; i < tasks.length; i++)
+      patch(tasks[i])
+    for (var r = 0; r < root.rows.length; r++) {
+      if (root.rows[r] && root.rows[r].type === "task")
+        patch(root.rows[r].task)
+    }
+    root.dataRev++
+  }
 
   function requestEditorRestore() {
     if (!root.editActive || !root.expandedUuid) return
@@ -184,8 +365,11 @@ Panel {
     var spec = root.currentFilterSpec()
     var filtered = []
     for (var i = 0; i < tasks.length; i++) {
-      if (Model.matchesAdvanced(tasks[i], spec))
-        filtered.push(tasks[i])
+      var task = tasks[i]
+      if (Model.matchesAdvanced(task, spec))
+        filtered.push(task)
+      else if (task && root.isDoneHoldActive(task.uuid))
+        filtered.push(task)
     }
     var next = Model.flattenRows(Model.buildGroups(filtered, "pass", root.groupBy, root.tr))
     if (!forceReplace && root.rows.length > 0 && Model.patchRowsInPlace(root.rows, next)) {
@@ -229,6 +413,10 @@ Panel {
     root.showAddAdvanced = false
     if (addField && addField.activeFocus)
       addField.focus = false
+  }
+
+  function collapseFilterPanel() {
+    root.showFilterPanel = false
   }
 
   function collapseExpandedTask() {
@@ -329,8 +517,176 @@ Panel {
   }
 
   function dismissOverlays() {
+    root.collapseFilterPanel()
     root.collapseComposer()
     root.collapseExpandedTask()
+  }
+
+  // Close the innermost transient UI on Escape. Returns true if something
+  // was dismissed (caller should not close the whole panel).
+  function dismissEscapeOverlay() {
+    if (confirmUnsaved && confirmUnsaved.opened) return false
+    if (confirmDelete && confirmDelete.opened) return false
+    if (confirmClear && confirmClear.opened) return false
+
+    function closePicker(field) {
+      if (field && field.popupOpen) {
+        field.discardPicker()
+        return true
+      }
+      return false
+    }
+    // Only top-level date fields — delegate ids collide with editScheduled/editDue strings.
+    if (closePicker(addScheduledField) || closePicker(addDueField))
+      return true
+
+    function closeDropdown(dd) {
+      if (dd && typeof dd.close === "function" && dd.popupOpen) {
+        dd.close()
+        return true
+      }
+      return false
+    }
+    if (closeDropdown(groupDropdown)
+        || closeDropdown(filterStatusDropdown)
+        || closeDropdown(projectFilterDropdown)
+        || closeDropdown(filterPriorityDropdown)
+        || closeDropdown(filterDueDropdown)
+        || closeDropdown(filterTimerDropdown)
+        || closeDropdown(filterBlockedDropdown)
+        || closeDropdown(priorityCombo)
+        || closeDropdown(projectCombo)
+        || closeDropdown(addDepCombo)) {
+      return true
+    }
+
+    if (root.renameFrom !== "") {
+      root.cancelRenameProject()
+      root._refocusKeyCatcher()
+      return true
+    }
+    if (root.showFilterPanel) {
+      root.collapseFilterPanel()
+      root._refocusKeyCatcher()
+      return true
+    }
+    if (root.composerExpanded) {
+      root.collapseComposer()
+      root._refocusKeyCatcher()
+      return true
+    }
+    if (root.expandedUuid) {
+      root.collapseExpandedTask()
+      root._refocusKeyCatcher()
+      return true
+    }
+    return false
+  }
+
+  function _refocusKeyCatcher() {
+    root.formFocused = false
+    Qt.callLater(function () {
+      if (keyCatcher) keyCatcher.forceActiveFocus()
+    })
+  }
+
+  function escapeFromField(event) {
+    if (root.dismissEscapeOverlay())
+      event.accepted = true
+  }
+
+  // Uniform action hotkeys across editor / composer / confirm dialogs:
+  //   Ctrl+Enter  — commit (save / add / confirm)
+  //   Esc         — cancel (already via dismissEscapeOverlay)
+  //   Ctrl+Delete — destroy (delete task / discard unsaved)
+  readonly property string hkHintCommit: " · Ctrl+Enter"
+  readonly property string hkHintCancel: " · Esc"
+  readonly property string hkHintDestroy: " · Ctrl+Delete"
+  readonly property bool anyConfirmOpen: !!(
+    (confirmUnsaved && confirmUnsaved.opened)
+    || (confirmDelete && confirmDelete.opened)
+    || (confirmClear && confirmClear.opened)
+  )
+
+  function findTaskByUuid(uuid) {
+    uuid = String(uuid || "")
+    if (!uuid) return null
+    for (var i = 0; i < root.rows.length; i++) {
+      var row = root.rows[i]
+      if (row && row.type === "task" && row.task && String(row.task.uuid) === uuid)
+        return row.task
+    }
+    return Model.findTask((root.snapshot && root.snapshot.tasks) || [], uuid)
+  }
+
+  function hotkeyCommit() {
+    if (confirmUnsaved && confirmUnsaved.opened) {
+      root.confirmUnsavedSave()
+      return
+    }
+    if (confirmDelete && confirmDelete.opened) {
+      root.confirmDeleteTask()
+      return
+    }
+    if (confirmClear && confirmClear.opened) {
+      root.confirmClearProjectAction()
+      return
+    }
+    if (root.renameFrom !== "") {
+      root.renameProject()
+      return
+    }
+    if (root.expandedUuid) {
+      if (!root.editDirty) return
+      var task = root.findTaskByUuid(root.expandedUuid)
+      if (!task) return
+      var v = root.editValues()
+      root.saveTask(task, v.description, v.project, v.priority, v.scheduled, v.due, v.details)
+      return
+    }
+    if (root.composerExpanded) {
+      root.addTask()
+      return
+    }
+    if (root.viewMode === "projects" && newProjectField
+        && String(newProjectField.text || "").trim() !== "") {
+      root.createProjectName()
+    }
+  }
+
+  function hotkeyDestroy() {
+    if (confirmUnsaved && confirmUnsaved.opened) {
+      root.confirmUnsavedDiscard()
+      return
+    }
+    if (confirmDelete && confirmDelete.opened) {
+      root.confirmDeleteTask()
+      return
+    }
+    if (confirmClear && confirmClear.opened) {
+      root.confirmClearProjectAction()
+      return
+    }
+    if (root.expandedUuid) {
+      var task = root.findTaskByUuid(root.expandedUuid)
+      if (task) root.requestDelete(task)
+    }
+  }
+
+  function hotkeyCancelConfirm() {
+    if (confirmUnsaved && confirmUnsaved.opened) {
+      root.confirmUnsavedContinue()
+      return
+    }
+    if (confirmDelete && confirmDelete.opened) {
+      confirmDelete.opened = false
+      root.pendingDeleteUuid = ""
+      return
+    }
+    if (confirmClear && confirmClear.opened) {
+      confirmClear.opened = false
+      root.pendingClearProject = ""
+    }
   }
 
   function maybeCollapseComposer() {
@@ -353,13 +709,35 @@ Panel {
   }
 
   onExpandedUuidChanged: {
-    if (root.expandedUuid)
+    if (root.expandedUuid) {
+      root.showFilterPanel = false
       root.collapseComposer()
+    } else {
+      root.formFocused = false
+    }
+  }
+
+  onComposerExpandedChanged: {
+    if (root.composerExpanded)
+      root.showFilterPanel = false
+    else
+      root.formFocused = false
+  }
+
+  onShowFilterPanelChanged: {
+    if (root.showFilterPanel) {
+      root.collapseComposer()
+      root.collapseExpandedTask()
+    } else {
+      root.formFocused = false
+    }
   }
 
   onViewModeChanged: {
+    root.collapseFilterPanel()
     root.collapseComposer()
     root.collapseExpandedTask()
+    root.cancelRenameProject()
   }
 
 
@@ -807,7 +1185,9 @@ Panel {
   function addTask() {
     var desc = addField.text.trim()
     if (!desc) return
-    if (!Model.datesValid(addScheduledField.text.trim(), addDueField.text.trim())) {
+    var sched = Model.toWireDateTime(addScheduledField.text.trim())
+    var due = Model.toWireDateTime(addDueField.text.trim())
+    if (!Model.datesValid(sched, due)) {
       root.lastError = "scheduled > due"
       return
     }
@@ -815,8 +1195,6 @@ Panel {
     var args = ["add", "--description", desc, "--status", status]
     if (priorityCombo.value) args.push("--priority", priorityCombo.value)
     if (projectCombo.value) args.push("--project", projectCombo.value)
-    var sched = addScheduledField.text.trim()
-    var due = addDueField.text.trim()
     if (sched) args.push("--scheduled", sched)
     if (due) args.push("--due", due)
     var details = addDetailsField.text
@@ -872,10 +1250,17 @@ Panel {
   function toggleDone(task) {
     if (!task || !task.uuid) return
     root.busyUuid = task.uuid
-    if (task.status === "completed")
+    if (task.status === "completed") {
+      root.applyLocalTaskStatus(task.uuid, "pending")
+      root.markDoneHold(task.uuid)
+      root.rebuildRows(true)
       runCmd(["status", "--uuid", task.uuid, "--status", "pending"])
-    else
+    } else {
+      root.applyLocalTaskStatus(task.uuid, "completed")
+      root.markDoneHold(task.uuid)
+      root.rebuildRows(true)
       runCmd(["done", "--uuid", task.uuid])
+    }
   }
 
   function toggleTimer(task) {
@@ -903,7 +1288,9 @@ Panel {
   function saveTask(task, desc, project, priority, scheduled, due, details) {
     if (!task || !task.uuid) return
     if (!desc || !String(desc).trim()) return
-    if (!Model.datesValid(scheduled, due)) {
+    var schedWire = Model.toWireDateTime(scheduled === undefined || scheduled === null ? "" : String(scheduled).trim())
+    var dueWire = Model.toWireDateTime(due === undefined || due === null ? "" : String(due).trim())
+    if (!Model.datesValid(schedWire, dueWire)) {
       root.lastError = "scheduled > due"
       return
     }
@@ -914,8 +1301,8 @@ Panel {
     var args = ["modify", "--uuid", task.uuid, "--description", String(desc).trim()]
     args.push("--project", project === undefined || project === null ? "" : String(project))
     args.push("--priority", priority === undefined || priority === null ? "" : String(priority))
-    args.push("--scheduled", scheduled === undefined || scheduled === null ? "" : String(scheduled).trim())
-    args.push("--due", due === undefined || due === null ? "" : String(due).trim())
+    args.push("--scheduled", schedWire)
+    args.push("--due", dueWire)
     args.push("--details", details === undefined || details === null ? "" : String(details))
     runCmd(args)
   }
@@ -962,6 +1349,12 @@ Panel {
     runCmd(["projects", "rename", "--old", from, "--new", to])
     renameFrom = ""
     renameTo = ""
+  }
+
+  function cancelRenameProject() {
+    renameFrom = ""
+    renameTo = ""
+    root.formFocused = false
   }
 
   function requestClearProject(name) {
@@ -1051,6 +1444,13 @@ Panel {
       root.dlog("export.exit", { code: code })
       Qt.callLater(root._drainCmdQueue)
     }
+  }
+
+  Timer {
+    id: doneHoldTimer
+    interval: 250
+    repeat: true
+    onTriggered: root.sweepDoneHolds()
   }
 
   Process {
@@ -1154,7 +1554,41 @@ Panel {
       id: keyCatcher
       anchors.fill: parent
       blocked: confirmDelete.opened || confirmClear.opened || confirmUnsaved.opened || root.formFocused || root.datePickerCount > 0
-      onCloseRequested: root.close()
+      // When a field has focus, keyCatcher is blocked and Escape never hits
+      // onCloseRequested. ApplicationShortcut still receives Escape.
+      Shortcut {
+        sequence: "Escape"
+        context: Qt.ApplicationShortcut
+        enabled: root.opened && root.anyConfirmOpen
+        onActivated: root.hotkeyCancelConfirm()
+      }
+      Shortcut {
+        sequence: "Escape"
+        context: Qt.ApplicationShortcut
+        enabled: root.opened
+          && keyCatcher.blocked
+          && !root.anyConfirmOpen
+        onActivated: {
+          if (!root.dismissEscapeOverlay())
+            root.close()
+        }
+      }
+      Shortcut {
+        sequences: ["Ctrl+Return", "Ctrl+Enter"]
+        context: Qt.ApplicationShortcut
+        enabled: root.opened
+        onActivated: root.hotkeyCommit()
+      }
+      Shortcut {
+        sequences: ["Ctrl+Delete", "Ctrl+Backspace"]
+        context: Qt.ApplicationShortcut
+        enabled: root.opened && (root.anyConfirmOpen || root.expandedUuid !== "")
+        onActivated: root.hotkeyDestroy()
+      }
+      onCloseRequested: {
+        if (root.dismissEscapeOverlay()) return
+        root.close()
+      }
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onMoveRequested: function(dx, dy) {
         if (dy !== 0) root.moveCursor(dy)
@@ -1193,7 +1627,7 @@ Panel {
             anchors.fill: parent
             z: -1
             onPressed: function(mouse) {
-              root.collapseExpandedTask()
+              root.dismissOverlays()
               mouse.accepted = false
             }
           }
@@ -1211,15 +1645,6 @@ Panel {
               font.family: root.fontFamily
               font.pixelSize: Style.font.title
               font.bold: true
-              anchors.verticalCenter: parent.verticalCenter
-            }
-
-            Text {
-              textFormat: Text.PlainText
-              text: String(root.snapshot.pending || 0)
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
               anchors.verticalCenter: parent.verticalCenter
             }
           }
@@ -1316,6 +1741,7 @@ Panel {
                   horizontalPadding: Style.space(8)
                   onClicked: {
                     root.collapseExpandedTask()
+                    root.collapseComposer()
                     root.showFilterPanel = !root.showFilterPanel
                   }
                 }
@@ -1491,9 +1917,9 @@ Panel {
                     value: root.filterPriority
                     options: [
                       { value: "", label: root.tr("filterAny") },
-                      { value: "H", label: "H" },
-                      { value: "M", label: "M" },
-                      { value: "L", label: "L" },
+                      { value: "H", label: root.tr("priH") },
+                      { value: "M", label: root.tr("priM") },
+                      { value: "L", label: root.tr("priL") },
                       { value: "__none__", label: root.tr("priNone") }
                     ]
                     onChanged: function(v) { root.filterPriority = v }
@@ -1534,6 +1960,7 @@ Panel {
                       { value: "soon", label: root.tr("filterDueSoon") },
                       { value: "overdue", label: root.tr("dueOverdue") },
                       { value: "today", label: root.tr("dueToday") },
+                      { value: "tomorrow", label: root.tr("dueTomorrow") },
                       { value: "week", label: root.tr("dueWeek") },
                       { value: "later", label: root.tr("dueLater") },
                       { value: "none", label: root.tr("dueNone") }
@@ -1636,17 +2063,18 @@ Panel {
                   width: parent.width
                   radius: Style.cornerRadius
                   color: root.filterFieldFill(root.filterSearchActive)
-                  implicitHeight: filterSearchField.implicitHeight + Style.space(4)
+                  // Match select-field chrome height (dropdown row + outer pad).
+                  implicitHeight: filterStatusDropdown.implicitHeight + Style.space(4)
                   TextField {
                     id: filterSearchField
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.fill: parent
                     anchors.margins: Style.space(2)
                     foreground: root.foreground
                     accent: root.filterSearchActive ? root.filterActiveColor : Color.accent
                     placeholderText: root.tr("filterSearchHint")
-                    verticalPadding: Style.space(2)
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    verticalPadding: Style.space(1)
                     text: root.filterSearch
                     onActiveFocusChanged: {
                       if (activeFocus) {
@@ -1656,6 +2084,7 @@ Panel {
                       root.formFocused = activeFocus
                     }
                     onTextChanged: root.filterSearch = text
+                    Keys.onEscapePressed: function(event) { root.escapeFromField(event) }
                   }
                 }
               }
@@ -1667,7 +2096,7 @@ Panel {
             foreground: root.foreground
             MouseArea {
               anchors.fill: parent
-              onClicked: root.collapseExpandedTask()
+              onClicked: root.dismissOverlays()
             }
           }
 
@@ -1679,7 +2108,9 @@ Panel {
             Layout.minimumHeight: Style.space(120)
             clip: true
             boundsBehavior: Flickable.StopAtBounds
-            onMovementStarted: root.dismissOverlays()
+            // Do not collapse the open editor on scroll — the list must pan
+            // with the expanded form intact. Empty-gap presses still dismiss
+            // via the MouseArea below.
             // Clicks on empty list gaps — collapse create form and open editor.
             MouseArea {
               anchors.fill: parent
@@ -1894,8 +2325,9 @@ Panel {
                     spacing: Style.space(4)
 
                   Rectangle {
+                    id: taskHoverBg
                     width: parent.width
-                    height: summaryRow.implicitHeight + Style.space(6)
+                    height: Math.max(summaryRow.implicitHeight, root.doneCheckSize) + Style.space(6)
                     radius: Style.cornerRadius
                     color: rowRoot.expanded
                       ? "transparent"
@@ -1911,6 +2343,7 @@ Panel {
                       acceptedButtons: Qt.LeftButton | Qt.RightButton
                       onEntered: { root.cursorActive = true; root.cursorIndex = rowRoot.index }
                       onClicked: function(mouse) {
+                        root.collapseFilterPanel()
                         root.collapseComposer()
                         root.cursorIndex = rowRoot.index
                         if (mouse.button === Qt.RightButton) {
@@ -1931,27 +2364,91 @@ Panel {
                       }
                     }
 
+                    // Checkbox centered on the hover strip itself (not the text column).
+                    Item {
+                      id: doneCheck
+                      z: 1
+                      anchors.left: parent.left
+                      anchors.leftMargin: Style.space(4)
+                      anchors.verticalCenter: parent.verticalCenter
+                      width: root.doneCheckSize
+                      height: root.doneCheckSize
+
+                      Text {
+                        textFormat: Text.PlainText
+                        anchors.fill: parent
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        text: "☐"
+                        color: root.foreground
+                        font.family: root.fontFamily
+                        font.pixelSize: root.doneCheckSize
+                      }
+                      Text {
+                        textFormat: Text.PlainText
+                        anchors.fill: parent
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        visible: !!(rowRoot.task && rowRoot.task.status === "completed")
+                        text: "✓"
+                        color: root.doneCheckColor
+                        font.family: root.fontFamily
+                        font.pixelSize: root.doneCheckSize * 0.72
+                        font.bold: true
+                      }
+                      MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.toggleDone(rowRoot.taskSrc)
+                      }
+                    }
+
+                    // Timer play/stop — same size and vertical centering as the done glyph.
+                    Item {
+                      id: timerCheck
+                      z: 1
+                      anchors.right: parent.right
+                      anchors.rightMargin: Style.space(4)
+                      anchors.verticalCenter: parent.verticalCenter
+                      width: root.doneCheckSize
+                      height: root.doneCheckSize
+
+                      readonly property bool running: !!(rowRoot.task && rowRoot.task.timerActive)
+
+                      Text {
+                        textFormat: Text.PlainText
+                        anchors.fill: parent
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        text: timerCheck.running ? "■" : "▶"
+                        color: timerCheck.running ? root.doneCheckColor : root.foreground
+                        font.family: root.fontFamily
+                        font.pixelSize: root.doneCheckSize * (timerCheck.running ? 0.78 : 0.85)
+                      }
+                      MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        hoverEnabled: true
+                        onClicked: {
+                          rowRoot.flushFieldsToDrafts()
+                          root.toggleTimer(rowRoot.taskSrc)
+                        }
+                      }
+                    }
+
                     Row {
                       id: summaryRow
                       z: 1
-                      anchors.left: parent.left
-                      anchors.right: parent.right
+                      anchors.left: doneCheck.right
+                      anchors.right: timerCheck.left
                       anchors.verticalCenter: parent.verticalCenter
-                      anchors.margins: Style.space(4)
+                      anchors.leftMargin: Style.space(6)
+                      anchors.rightMargin: Style.space(6)
                       spacing: Style.space(6)
 
-                      Button {
-                        text: rowRoot.task && rowRoot.task.status === "completed" ? "☑" : "☐"
-                        foreground: root.foreground
-                        fontFamily: root.fontFamily
-                        fontSize: Style.font.body
-                        verticalPadding: Style.space(1)
-                        horizontalPadding: Style.space(4)
-                        onClicked: root.toggleDone(rowRoot.taskSrc)
-                      }
-
                       Column {
-                        width: parent.width - Style.space(90)
+                        width: parent.width
+                        clip: true
                         spacing: 1
 
                         // Collapsed: plain title. Expanded: same slot becomes the editor.
@@ -1963,11 +2460,17 @@ Panel {
                             var _ = root.dataRev
                             return rowRoot.task ? rowRoot.task.description : ""
                           }
-                          color: rowRoot.task && rowRoot.task.overdue ? root.urgent : root.foreground
+                          color: {
+                            if (rowRoot.task && rowRoot.task.status === "completed")
+                              return root.dim
+                            return root.foreground
+                          }
                           font.family: root.fontFamily
                           font.pixelSize: Style.font.body
                           font.strikeout: !!(rowRoot.task && rowRoot.task.status === "completed")
                           elide: Text.ElideRight
+                          wrapMode: Text.NoWrap
+                          maximumLineCount: 1
                         }
                         TextField {
                           id: editDescField
@@ -1977,6 +2480,7 @@ Panel {
                           verticalPadding: Style.space(2)
                           onActiveFocusChanged: root.formFocused = activeFocus
                           onTextChanged: rowRoot.setEditField("description", text)
+                          Keys.onEscapePressed: function(event) { root.escapeFromField(event) }
                           onVisibleChanged: {
                             if (!visible) return
                             Qt.callLater(function () {
@@ -1990,92 +2494,83 @@ Panel {
                           }
                         }
 
-                        Row {
-                          visible: !rowRoot.expanded
-                          spacing: Style.space(6)
+                        // List meta as fixed columns (scan-stable): project flexes
+                        // and elides; priority / due / blocked keep reserved tracks
+                        // even when empty so optional badges never shove neighbors.
+                        RowLayout {
+                          id: metaRow
+                          visible: !rowRoot.expanded && !!(rowRoot.task && (
+                            rowRoot.task.priority
+                            || rowRoot.task.due
+                            || rowRoot.task.scheduled
+                            || rowRoot.task.project
+                            || rowRoot.task.blocked
+                          ))
+                          width: parent.width
+                          spacing: Style.space(8)
+
                           Text {
                             textFormat: Text.PlainText
-                            visible: !!(rowRoot.task && rowRoot.task.project)
-                            text: rowRoot.task ? rowRoot.task.project : ""
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            Layout.preferredWidth: 1
+                            text: rowRoot.task && rowRoot.task.project ? rowRoot.task.project : ""
                             color: root.dim
+                            opacity: rowRoot.task && rowRoot.task.project ? 1 : 0
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
+                            elide: Text.ElideRight
+                            wrapMode: Text.NoWrap
+                            maximumLineCount: 1
                           }
                           Text {
                             textFormat: Text.PlainText
-                            visible: !!(rowRoot.task && rowRoot.task.priority)
-                            text: rowRoot.task ? rowRoot.task.priority : ""
-                            color: root.foreground
+                            Layout.preferredWidth: root.metaPriWidth
+                            Layout.minimumWidth: root.metaPriWidth
+                            Layout.maximumWidth: root.metaPriWidth
+                            text: rowRoot.task && rowRoot.task.priority
+                              ? Model.priorityLabel(rowRoot.task.priority, root.tr)
+                              : ""
+                            color: root.priorityColor(rowRoot.task ? rowRoot.task.priority : "")
+                            opacity: rowRoot.task && rowRoot.task.priority ? 1 : 0
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
                             font.bold: true
+                            horizontalAlignment: Text.AlignLeft
+                            wrapMode: Text.NoWrap
+                            maximumLineCount: 1
                           }
                           Text {
                             textFormat: Text.PlainText
-                            visible: !!(rowRoot.task && (rowRoot.task.scheduled || rowRoot.task.due))
-                            text: rowRoot.task ? Model.dateRangeLabel(rowRoot.task) : ""
-                            color: rowRoot.task && rowRoot.task.overdue ? root.urgent : root.dim
+                            Layout.preferredWidth: root.metaDueWidth
+                            Layout.minimumWidth: root.metaDueWidth
+                            Layout.maximumWidth: root.metaDueWidth
+                            text: rowRoot.task && (rowRoot.task.due || rowRoot.task.scheduled)
+                              ? Model.dueListLabel(rowRoot.task, root.tr)
+                              : ""
+                            color: root.dueMetaColor(rowRoot.task)
+                            opacity: rowRoot.task && (rowRoot.task.due || rowRoot.task.scheduled) ? 1 : 0
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
+                            horizontalAlignment: Text.AlignLeft
+                            elide: Text.ElideRight
+                            wrapMode: Text.NoWrap
+                            maximumLineCount: 1
                           }
                           Text {
                             textFormat: Text.PlainText
-                            visible: !!(rowRoot.task && rowRoot.task.blocked)
+                            Layout.preferredWidth: root.metaBlockedWidth
+                            Layout.minimumWidth: root.metaBlockedWidth
+                            Layout.maximumWidth: root.metaBlockedWidth
                             text: root.tr("blocked")
                             color: root.urgent
+                            opacity: rowRoot.task && rowRoot.task.blocked ? 1 : 0
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
+                            horizontalAlignment: Text.AlignLeft
+                            wrapMode: Text.NoWrap
+                            maximumLineCount: 1
                           }
-                          Text {
-                            textFormat: Text.PlainText
-                            visible: !!(rowRoot.task && rowRoot.task.blocking)
-                            text: root.tr("blocking")
-                            color: root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.caption
-                          }
-                          Text {
-                            textFormat: Text.PlainText
-                            visible: !!(rowRoot.task && rowRoot.task.status === "waiting" && rowRoot.task.waitingFor)
-                            text: root.tr("waitingFor") + ": " + (rowRoot.task ? rowRoot.task.waitingFor : "")
-                            color: root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.caption
-                            elide: Text.ElideRight
-                            width: Style.space(140)
-                          }
-                          Text {
-                            textFormat: Text.PlainText
-                            visible: !!(rowRoot.task && rowRoot.task.status === "completed" && rowRoot.task.outcome)
-                            text: root.tr("outcome") + ": " + (rowRoot.task ? rowRoot.task.outcome : "")
-                            color: root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.caption
-                            elide: Text.ElideRight
-                            width: Style.space(140)
-                          }
-                          Text {
-                            textFormat: Text.PlainText
-                            visible: !!(rowRoot.task && rowRoot.task.todayLabel)
-                            text: root.tr("todayTime") + " " + (rowRoot.task ? rowRoot.task.todayLabel : "")
-                            color: root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.caption
-                          }
-                        }
-                      }
-
-                      Button {
-                        text: rowRoot.task && rowRoot.task.timerActive ? "■" : "▶"
-                        foreground: rowRoot.task && rowRoot.task.timerActive ? Color.accent : root.foreground
-                        fontFamily: root.fontFamily
-                        fontSize: Style.font.caption
-                        verticalPadding: Style.space(2)
-                        horizontalPadding: Style.space(6)
-                        tooltipText: rowRoot.task && rowRoot.task.timerActive ? root.tr("stop") : root.tr("play")
-                        onClicked: {
-                          rowRoot.flushFieldsToDrafts()
-                          root.toggleTimer(rowRoot.taskSrc)
                         }
                       }
                     }
@@ -2133,6 +2628,7 @@ Panel {
                             background: Item {}
                             onActiveFocusChanged: root.formFocused = activeFocus
                             onTextChanged: rowRoot.setEditField("details", text)
+                            Keys.onEscapePressed: function(event) { root.escapeFromField(event) }
                           }
                         }
                       }
@@ -2222,6 +2718,7 @@ Panel {
                           verticalPadding: Style.space(2)
                           onActiveFocusChanged: root.formFocused = activeFocus
                           onTextChanged: rowRoot.setEditField("waitingFor", text)
+                          Keys.onEscapePressed: function(event) { root.escapeFromField(event) }
                           onEditingFinished: {
                             if (!rowRoot.task) return
                             var next = text.trim()
@@ -2259,6 +2756,7 @@ Panel {
                           verticalPadding: Style.space(2)
                           onActiveFocusChanged: root.formFocused = activeFocus
                           onTextChanged: rowRoot.setEditField("outcome", text)
+                          Keys.onEscapePressed: function(event) { root.escapeFromField(event) }
                           onEditingFinished: {
                             if (!rowRoot.task) return
                             var next = text.trim()
@@ -2299,9 +2797,9 @@ Panel {
                             value: ""
                             options: [
                               { value: "", label: root.tr("priorityNone") },
-                              { value: "H", label: "H" },
-                              { value: "M", label: "M" },
-                              { value: "L", label: "L" }
+                              { value: "H", label: root.tr("priH") },
+                              { value: "M", label: root.tr("priM") },
+                              { value: "L", label: root.tr("priL") }
                             ]
                             onChanged: function(v) { rowRoot.setEditField("priority", v) }
                           }
@@ -2653,6 +3151,7 @@ Panel {
                           placeholderText: root.tr("adjustTimeHint")
                           verticalPadding: Style.space(2)
                           onActiveFocusChanged: root.formFocused = activeFocus
+                          Keys.onEscapePressed: function(event) { root.escapeFromField(event) }
                           Keys.onReturnPressed: function(event) {
                             rowRoot.flushFieldsToDrafts()
                             root.adjustTime(rowRoot.taskSrc, text, false)
@@ -2660,11 +3159,13 @@ Panel {
                           }
                         }
                         Button {
+                          anchors.verticalCenter: adjustTimeField.verticalCenter
+                          height: adjustTimeField.height
                           text: root.tr("timeAdd")
                           foreground: root.foreground
                           fontFamily: root.fontFamily
                           fontSize: Style.font.caption
-                          verticalPadding: Style.space(1)
+                          verticalPadding: Style.space(2)
                           horizontalPadding: Style.space(6)
                           onClicked: {
                             rowRoot.flushFieldsToDrafts()
@@ -2672,11 +3173,13 @@ Panel {
                           }
                         }
                         Button {
+                          anchors.verticalCenter: adjustTimeField.verticalCenter
+                          height: adjustTimeField.height
                           text: root.tr("timeRemove")
                           foreground: root.urgent
                           fontFamily: root.fontFamily
                           fontSize: Style.font.caption
-                          verticalPadding: Style.space(1)
+                          verticalPadding: Style.space(2)
                           horizontalPadding: Style.space(6)
                           onClicked: {
                             rowRoot.flushFieldsToDrafts()
@@ -2692,23 +3195,24 @@ Panel {
                     Row {
                       spacing: Style.space(6)
 
-                      // Active Save is a real Button; inactive is a dead visual
-                      // plus a blocking MouseArea so clicks never fall through
-                      // to the list (which would collapse the editor).
+                      // Always the same Button chrome so label baseline does
+                      // not jump between dirty/idle. Idle: dimmed + eat clicks
+                      // so they never fall through to the list.
                       Item {
                         id: saveWrap
-                        width: root.editDirty ? saveBtn.implicitWidth : saveIdle.implicitWidth
-                        height: root.editDirty ? saveBtn.implicitHeight : saveIdle.implicitHeight
+                        width: saveBtn.implicitWidth
+                        height: saveBtn.implicitHeight
 
                         Button {
                           id: saveBtn
-                          visible: root.editDirty
                           anchors.fill: parent
-                          text: root.tr("save")
+                          text: root.tr("save") + root.hkHintCommit
                           foreground: root.foreground
                           fontFamily: root.fontFamily
                           fontSize: Style.font.caption
+                          opacity: root.editDirty ? 1 : 0.4
                           onClicked: {
+                            if (!root.editDirty) return
                             rowRoot.flushFieldsToDrafts()
                             var s = rowRoot.captureEditorValues()
                             root.saveTask(
@@ -2721,22 +3225,6 @@ Panel {
                               s.details
                             )
                           }
-                        }
-
-                        Text {
-                          textFormat: Text.PlainText
-                          id: saveIdle
-                          visible: !root.editDirty
-                          anchors.centerIn: parent
-                          text: root.tr("save")
-                          color: root.foreground
-                          opacity: 0.4
-                          font.family: root.fontFamily
-                          font.pixelSize: Style.font.caption
-                          leftPadding: Style.space(10)
-                          rightPadding: Style.space(10)
-                          topPadding: Style.space(4)
-                          bottomPadding: Style.space(4)
                         }
 
                         MouseArea {
@@ -2752,7 +3240,7 @@ Panel {
                       }
 
                       Button {
-                        text: root.tr("cancel")
+                        text: root.tr("cancel") + root.hkHintCancel
                         foreground: root.foreground
                         fontFamily: root.fontFamily
                         fontSize: Style.font.caption
@@ -2760,7 +3248,7 @@ Panel {
                       }
 
                       Button {
-                        text: root.tr("deleteTask")
+                        text: root.tr("deleteTask") + root.hkHintDestroy
                         foreground: root.urgent
                         fontFamily: root.fontFamily
                         fontSize: Style.font.caption
@@ -2789,7 +3277,7 @@ Panel {
             foreground: root.foreground
             MouseArea {
               anchors.fill: parent
-              onClicked: root.collapseExpandedTask()
+              onClicked: root.dismissOverlays()
             }
           }
 
@@ -2850,40 +3338,29 @@ Panel {
                   onAccepted: {
                     if (parent.canAdd) root.addTask()
                   }
+                  Keys.onEscapePressed: function(event) { root.escapeFromField(event) }
                 }
 
                 Item {
                   id: addBtnWrap
-                  width: parent.canAdd ? addBtn.implicitWidth : addIdle.implicitWidth
-                  height: parent.canAdd ? addBtn.implicitHeight : addIdle.implicitHeight
+                  anchors.verticalCenter: addField.verticalCenter
+                  width: addBtn.implicitWidth
+                  height: addField.height
 
                   Button {
                     id: addBtn
-                    visible: parent.parent.canAdd
                     anchors.fill: parent
-                    text: root.tr("addTaskBtn")
+                    text: root.tr("addTaskBtn") + root.hkHintCommit
                     foreground: root.foreground
                     fontFamily: root.fontFamily
                     fontSize: Style.font.caption
                     verticalPadding: Style.space(4)
                     horizontalPadding: Style.space(10)
-                    onClicked: root.addTask()
-                  }
-
-                  Text {
-                    textFormat: Text.PlainText
-                    id: addIdle
-                    visible: !parent.parent.canAdd
-                    anchors.centerIn: parent
-                    text: root.tr("addTaskBtn")
-                    color: root.foreground
-                    opacity: 0.4
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                    leftPadding: Style.space(10)
-                    rightPadding: Style.space(10)
-                    topPadding: Style.space(4)
-                    bottomPadding: Style.space(4)
+                    opacity: parent.parent.canAdd ? 1 : 0.4
+                    onClicked: {
+                      if (!parent.parent.canAdd) return
+                      root.addTask()
+                    }
                   }
 
                   MouseArea {
@@ -2955,6 +3432,7 @@ Panel {
                   font.pixelSize: Style.font.body
                   background: Item {}
                   onActiveFocusChanged: root.formFocused = activeFocus
+                  Keys.onEscapePressed: function(event) { root.escapeFromField(event) }
                 }
               }
             }
@@ -3028,6 +3506,7 @@ Panel {
                 placeholderText: root.tr("waitingForHint")
                 verticalPadding: Style.space(2)
                 onActiveFocusChanged: root.formFocused = activeFocus
+                Keys.onEscapePressed: function(event) { root.escapeFromField(event) }
               }
             }
 
@@ -3050,6 +3529,7 @@ Panel {
                 placeholderText: root.tr("outcomeHint")
                 verticalPadding: Style.space(2)
                 onActiveFocusChanged: root.formFocused = activeFocus
+                Keys.onEscapePressed: function(event) { root.escapeFromField(event) }
               }
             }
 
@@ -3076,9 +3556,9 @@ Panel {
                   value: ""
                   options: [
                     { value: "", label: root.tr("priorityNone") },
-                    { value: "H", label: "H" },
-                    { value: "M", label: "M" },
-                    { value: "L", label: "L" }
+                    { value: "H", label: root.tr("priH") },
+                    { value: "M", label: root.tr("priM") },
+                    { value: "L", label: root.tr("priL") }
                   ]
                 }
               }
@@ -3332,6 +3812,7 @@ Panel {
             }
 
             delegate: Rectangle {
+              id: projectDelegate
               required property var modelData
               required property int index
               width: ListView.view.width
@@ -3340,6 +3821,8 @@ Panel {
               color: root.projectFilter === modelData.name
                 ? Style.hoverFillFor(root.foreground, Color.accent)
                 : "transparent"
+
+              readonly property bool renaming: root.renameFrom === modelData.name
 
               // Three aligned columns: name | rename | clear
               RowLayout {
@@ -3354,15 +3837,45 @@ Panel {
                   Layout.fillWidth: true
                   Layout.preferredWidth: 1
                   Layout.alignment: Qt.AlignVCenter
+                  visible: !projectDelegate.renaming
                   text: modelData.label
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   fontSize: Style.font.body
                   leftAlign: true
                   onClicked: {
+                    root.cancelRenameProject()
                     root.setProjectFilter(modelData.name)
                     root.viewMode = "tasks"
                     root.groupBy = "project"
+                  }
+                }
+
+                TextField {
+                  id: renameInlineField
+                  Layout.fillWidth: true
+                  Layout.preferredWidth: 1
+                  Layout.alignment: Qt.AlignVCenter
+                  visible: projectDelegate.renaming
+                  foreground: root.foreground
+                  verticalPadding: Style.space(3)
+                  onVisibleChanged: {
+                    if (visible) {
+                      text = modelData.name
+                      root.renameTo = modelData.name
+                      Qt.callLater(function () {
+                        renameInlineField.forceActiveFocus()
+                        renameInlineField.selectAll()
+                      })
+                    }
+                  }
+                  onTextChanged: {
+                    if (visible)
+                      root.renameTo = text
+                  }
+                  onAccepted: root.renameProject()
+                  Keys.onEscapePressed: function(event) {
+                    root.escapeFromField(event)
                   }
                 }
 
@@ -3371,15 +3884,19 @@ Panel {
                   Layout.preferredWidth: 1
                   Layout.alignment: Qt.AlignVCenter
                   visible: modelData.kind === "project"
-                  text: root.tr("rename")
+                  text: projectDelegate.renaming
+                    ? (root.tr("save") + root.hkHintCommit)
+                    : root.tr("rename")
                   foreground: root.dim
                   fontFamily: root.fontFamily
                   fontSize: Style.font.caption
                   onClicked: {
-                    root.renameFrom = modelData.name
-                    root.renameTo = modelData.name
-                    renameField.text = modelData.name
-                    renameField.forceActiveFocus()
+                    if (projectDelegate.renaming) {
+                      root.renameProject()
+                    } else {
+                      root.renameFrom = modelData.name
+                      root.renameTo = modelData.name
+                    }
                   }
                 }
                 Button {
@@ -3387,11 +3904,18 @@ Panel {
                   Layout.preferredWidth: 1
                   Layout.alignment: Qt.AlignVCenter
                   visible: modelData.kind === "project"
-                  text: root.tr("clearProject")
-                  foreground: root.urgent
+                  text: projectDelegate.renaming
+                    ? (root.tr("cancel") + root.hkHintCancel)
+                    : root.tr("clearProject")
+                  foreground: projectDelegate.renaming ? root.dim : root.urgent
                   fontFamily: root.fontFamily
                   fontSize: Style.font.caption
-                  onClicked: root.requestClearProject(modelData.name)
+                  onClicked: {
+                    if (projectDelegate.renaming)
+                      root.cancelRenameProject()
+                    else
+                      root.requestClearProject(modelData.name)
+                  }
                 }
               }
             }
@@ -3425,33 +3949,14 @@ Panel {
             }
             Button {
               id: createProjBtn
-              text: root.tr("add")
+              anchors.verticalCenter: newProjectField.verticalCenter
+              height: newProjectField.height
+              text: root.tr("add") + root.hkHintCommit
               foreground: root.foreground
               fontFamily: root.fontFamily
               fontSize: Style.font.caption
+              verticalPadding: Style.space(4)
               onClicked: root.createProjectName()
-            }
-          }
-
-          Row {
-            visible: root.renameFrom !== ""
-            Layout.fillWidth: true
-            spacing: Style.space(6)
-            TextField {
-              id: renameField
-              width: parent.width - renameBtn.width - Style.space(6)
-              foreground: root.foreground
-              verticalPadding: Style.space(3)
-              onTextChanged: root.renameTo = text
-              onAccepted: root.renameProject()
-            }
-            Button {
-              id: renameBtn
-              text: root.tr("rename")
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              fontSize: Style.font.caption
-              onClicked: root.renameProject()
             }
           }
         }
@@ -3605,12 +4110,14 @@ Panel {
         }
       }
 
-      ConfirmDialog {
+      HintConfirmDialog {
         id: confirmDelete
         anchors.fill: parent
         message: root.tr("confirmDelete")
         cancelText: root.tr("cancel")
         confirmText: root.tr("confirm")
+        cancelHint: "Esc"
+        confirmHint: "Ctrl+Enter"
         foreground: root.foreground
         background: Color.popups.background
         fontFamily: root.fontFamily
@@ -3618,12 +4125,14 @@ Panel {
         onConfirmed: root.confirmDeleteTask()
       }
 
-      ConfirmDialog {
+      HintConfirmDialog {
         id: confirmClear
         anchors.fill: parent
         message: root.tr("confirmClearProject")
         cancelText: root.tr("cancel")
         confirmText: root.tr("confirm")
+        cancelHint: "Esc"
+        confirmHint: "Ctrl+Enter"
         foreground: root.foreground
         background: Color.popups.background
         fontFamily: root.fontFamily
@@ -3644,6 +4153,16 @@ Panel {
           if (!opened) return false
           if (event.key === Qt.Key_Escape) {
             root.confirmUnsavedContinue()
+            return true
+          }
+          if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+              && (event.modifiers & Qt.ControlModifier)) {
+            root.confirmUnsavedSave()
+            return true
+          }
+          if ((event.key === Qt.Key_Delete || event.key === Qt.Key_Backspace)
+              && (event.modifiers & Qt.ControlModifier)) {
+            root.confirmUnsavedDiscard()
             return true
           }
           if (event.key === Qt.Key_Left || event.key === Qt.Key_Backtab) {
@@ -3709,9 +4228,9 @@ Panel {
 
                 Repeater {
                   model: [
-                    { label: root.tr("unsavedSave"), action: "save" },
-                    { label: root.tr("unsavedContinue"), action: "continue" },
-                    { label: root.tr("unsavedDiscard"), action: "discard" }
+                    { label: root.tr("unsavedSave"), hint: "Ctrl+Enter", action: "save" },
+                    { label: root.tr("unsavedContinue"), hint: "Esc", action: "continue" },
+                    { label: root.tr("unsavedDiscard"), hint: "Ctrl+Delete", action: "discard" }
                   ]
 
                   BorderSurface {
@@ -3720,8 +4239,8 @@ Panel {
                     readonly property bool selected: confirmUnsaved.selectedIndex === index
                     readonly property bool destructive: modelData.action === "discard"
 
-                    width: Math.max(Style.space(88), labelText.implicitWidth + Style.space(20))
-                    height: Style.space(34)
+                    width: Math.max(Style.space(88), btnCol.implicitWidth + Style.space(20))
+                    height: Math.max(Style.space(44), btnCol.implicitHeight + Style.space(10))
                     color: selected
                       ? (destructive ? Util.alpha(Color.urgent, 0.22) : Util.alpha(root.foreground, 0.08))
                       : "transparent"
@@ -3732,16 +4251,29 @@ Panel {
                       Style.normalBorderWidth)
                     radius: 0
 
-                    Text {
-                      textFormat: Text.PlainText
-                      id: labelText
+                    Column {
+                      id: btnCol
                       anchors.centerIn: parent
-                      text: modelData.label
-                      color: destructive
-                        ? (selected ? Color.urgent : root.foreground)
-                        : (selected ? Color.accent : root.foreground)
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.caption
+                      spacing: Style.space(1)
+
+                      Text {
+                        textFormat: Text.PlainText
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: modelData.label
+                        color: destructive
+                          ? (selected ? Color.urgent : root.foreground)
+                          : (selected ? Color.accent : root.foreground)
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                      }
+                      Text {
+                        textFormat: Text.PlainText
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: modelData.hint
+                        color: root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption * 0.85
+                      }
                     }
 
                     MouseArea {

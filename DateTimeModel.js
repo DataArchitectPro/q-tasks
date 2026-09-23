@@ -1,35 +1,53 @@
 // Compact month-grid helpers for DateTimeField.
+// UI display is DD.MM.YYYY [HH:MM:SS]; calendar keys stay YYYY-MM-DD internally.
+// Wire format for Taskwarrior remains YYYY-MM-DD[THH:mm:ss].
 
 function pad2(n) {
   n = Number(n) || 0
   return (n < 10 ? "0" : "") + n
 }
 
-function formatDate(d) {
+// Internal calendar key — not shown in the text field.
+function dateKey(d) {
   if (!d || isNaN(d.getTime())) return ""
   return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate())
 }
 
+// UI date: DD.MM.YYYY
+function formatDate(d) {
+  if (!d || isNaN(d.getTime())) return ""
+  return pad2(d.getDate()) + "." + pad2(d.getMonth() + 1) + "." + d.getFullYear()
+}
+
+// UI datetime: DD.MM.YYYY HH:MM:SS (24h)
 function formatDateTime(d) {
   if (!d || isNaN(d.getTime())) return ""
-  return formatDate(d) + "T" + pad2(d.getHours()) + ":" + pad2(d.getMinutes())
+  return formatDate(d) + " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds())
 }
 
 function parseFlexible(text) {
   var s = String(text || "").trim()
   if (!s) return null
-  // YYYY-MM-DD or YYYY-MM-DDTHH:mm[:ss]
-  var m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?$/)
+
+  // DD.MM.YYYY[ HH:MM[:SS]] or DD.MM.YYYY[THH:MM[:SS]]
+  var m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/)
+  if (m) {
+    return new Date(+m[3], +m[2] - 1, +m[1], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0))
+  }
+
+  // Legacy UI / wire: YYYY-MM-DD or YYYY-MM-DDTHH:mm[:ss]
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?$/)
   if (m) {
     return new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0))
   }
-  // YYYYMMDDTHHMMSSZ (taskwarrior export)
+
+  // Taskwarrior export: YYYYMMDDTHHMMSSZ
   m = s.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/)
   if (m) {
     return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]))
   }
-  var d = new Date(s)
-  return isNaN(d.getTime()) ? null : d
+
+  return null
 }
 
 function daysInMonth(year, month) {

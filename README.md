@@ -23,14 +23,22 @@ Anything you do here is stored in your normal Taskwarrior / Timewarrior data. Yo
 - **Task list** with grouping (project, priority, due, status) and a collapsible advanced filter
 - **Create & edit** in place: title, details, status (Waiting / In progress / Done), waiting-for, outcome, priority, project
 - **Schedule** fields (scheduled / due), **dependencies** (depends / blocks), and **Timewarrior** timers with manual time adjust
+- Progressive **list meta**: project · priority · due (Today / Tomorrow / Overdue) · blocked — colors follow the Omarchy theme
 - **Projects** view: browse projects, rename, clear project from tasks
 - **Unsaved changes** dialog when closing a dirty editor (Save / Keep editing / Discard)
+- Uniform **hotkeys**: `Ctrl+Enter` commit, `Esc` cancel, `Ctrl+Delete` destroy
 - **i18n**: English and Russian UI (system language, or pick one in About)
 - **About** tab with version, developer info, GitHub link, language switch, and debug logging toggle
 
 ### Task list
 
 ![Task list](docs/screenshots/en/01-panel-list.png)
+
+### Grouping
+
+Group the list by project, priority, due, or status from the toolbar.
+
+![Grouping by project](docs/screenshots/en/07-grouping.png)
 
 ### Filter & search
 
@@ -40,15 +48,19 @@ Expand **Filter** to narrow by status, project, priority, due, timer, and depend
 
 ### New task composer
 
-The sticky composer at the bottom expands into the same field layout as the editor: details, status, waiting-for, priority, project, and optional schedule / deps / time.
+The sticky composer at the bottom expands into the same field layout as the editor: details, status, waiting-for, priority, project, and optional schedule / deps / time under a spoiler.
 
 ![New task form](docs/screenshots/en/05-new-task.png)
 
+![New task — schedule, links, time](docs/screenshots/en/08-new-task-advanced.png)
+
 ### Task editor
 
-Click a task to edit it in place. Save when dirty, Cancel to collapse, or Delete.
+Click a task to edit it in place. Save when dirty (`Ctrl+Enter`), Cancel (`Esc`) to collapse, or Delete (`Ctrl+Delete`).
 
 ![Task editor](docs/screenshots/en/02-panel-edit.png)
+
+![Task editor — advanced fields](docs/screenshots/en/09-edit-advanced.png)
 
 ### Projects
 

@@ -18,7 +18,13 @@ from pathlib import Path
 from typing import Any
 
 
-TW_RC = ["rc.verbose=nothing", "rc.color=off", "rc.confirmation=off", "rc.gc=0"]
+TW_RC = [
+    "rc.verbose=nothing",
+    "rc.color=off",
+    "rc.confirmation=off",
+    "rc.bulk=0",
+    "rc.gc=0",
+]
 
 # Hard caps so a huge/synchronized TW DB cannot hang or OOM the long-lived shell.
 HELPER_TIMEOUT_SEC = 8.0
@@ -811,7 +817,8 @@ def cmd_export(_: argparse.Namespace, extra: dict | None = None) -> int:
             "actionable": 0,
             "active": None,
             "label": "!",
-            "tooltip": "Taskwarrior is not installed",
+            "tooltip": "",
+            "waiting": 0,
         }
         if extra:
             payload.update(extra)
@@ -851,6 +858,7 @@ def cmd_export(_: argparse.Namespace, extra: dict | None = None) -> int:
                 blocker["blocking"] = True
 
     pending = [t for t in tasks if t["status"] == "pending"]
+    waiting = [t for t in tasks if t["status"] == "waiting"]
     actionable = [
         t
         for t in pending
@@ -860,10 +868,10 @@ def cmd_export(_: argparse.Namespace, extra: dict | None = None) -> int:
 
     active_desc = ""
     active_uuid = ""
-    for t in pending:
-        if t["timerActive"]:
-            active_desc = t["description"]
-            active_uuid = t["uuid"]
+    for t in tasks:
+        if t.get("timerActive"):
+            active_desc = clip_str(t.get("description") or "", MAX_SHORT_STRING_LEN)
+            active_uuid = clip_str(t.get("uuid") or "", 64)
             break
     if not active_desc and active:
         active_desc = clip_str(active.get("description") or "", MAX_SHORT_STRING_LEN)
@@ -871,20 +879,10 @@ def cmd_export(_: argparse.Namespace, extra: dict | None = None) -> int:
         active_uuid = clip_str(uu[0] if uu else "", 64)
 
     count = len(pending)
+    waiting_count = len(waiting)
     label_count = len(actionable) if actionable else count
     icon = "\uf0ae"
-    label = f"{icon}  {label_count}" if count else icon
-
-    # Always lead with the product name so a running task description
-    # (e.g. "Omarchy") is never mistaken for the widget brand.
-    if active_desc and count:
-        tooltip = f"Taskwarrior Time · {active_desc} · {count} pending"
-    elif active_desc:
-        tooltip = f"Taskwarrior Time · {active_desc}"
-    elif count:
-        tooltip = f"Taskwarrior Time · {count} pending"
-    else:
-        tooltip = "Taskwarrior Time"
+    label = f"{icon}  {label_count}" if (count or waiting_count) else icon
 
     payload = {
         "ok": True,
@@ -893,6 +891,7 @@ def cmd_export(_: argparse.Namespace, extra: dict | None = None) -> int:
         "tasks": tasks,
         "projects": all_projects()[:MAX_PROJECTS],
         "pending": count,
+        "waiting": waiting_count,
         "actionable": len(actionable),
         "active": {
             "description": active_desc,
@@ -901,7 +900,8 @@ def cmd_export(_: argparse.Namespace, extra: dict | None = None) -> int:
         if active_desc or active_uuid
         else None,
         "label": label,
-        "tooltip": clip_str(tooltip, MAX_SHORT_STRING_LEN),
+        # Tip text is composed in QML so it follows the UI language.
+        "tooltip": "",
     }
     if extra:
         payload.update(extra)
@@ -1153,6 +1153,43 @@ def cmd_deps(args: argparse.Namespace) -> int:
     return mutate_and_export(task_cmd(args.uuid, "modify", *mods))
 
 
+def project_task_uuids(project: str) -> tuple[list[str], str | None]:
+    """UUIDs of all non-deleted tasks that use this exact project name."""
+    tasks, err = export_tasks()
+    if err:
+        return [], err
+    want = str(project or "")
+    uuids: list[str] = []
+    for raw in tasks:
+        if str(raw.get("project") or "") != want:
+            continue
+        uid = str(raw.get("uuid") or "").strip()
+        if uid:
+            uuids.append(uid)
+    return uuids, None
+
+
+def cascade_set_project(old: str, new: str | None) -> subprocess.CompletedProcess[str]:
+    """Set or clear project on every matching task (pending/waiting/completed).
+
+    Bulk `task project:X modify …` prompts once the change hits Taskwarrior's
+    bulk threshold — even with confirmation=off — so we modify by UUID instead.
+    """
+    uuids, err = project_task_uuids(old)
+    if err:
+        return subprocess.CompletedProcess(["task"], 1, "", err)
+    if not uuids:
+        return subprocess.CompletedProcess(["task"], 0, "", "")
+
+    mod = "project:" if new is None or new == "" else f"project:{new}"
+    last = subprocess.CompletedProcess(["task"], 0, "", "")
+    for uuid in uuids:
+        last = task_cmd(uuid, "modify", mod)
+        if last.returncode != 0:
+            return last
+    return last
+
+
 def cmd_projects(args: argparse.Namespace) -> int:
     action = args.action
     if action == "list":
@@ -1174,13 +1211,18 @@ def cmd_projects(args: argparse.Namespace) -> int:
         new = str(args.new or "").strip()
         if not old or not new or ":" in new:
             return err_json("old and new project names required (no colon)")
+        if old == new:
+            return cmd_export(argparse.Namespace())
+
         extras = load_extra_projects()
         if old in extras:
-            extras = [new if n == old else n for n in extras]
+            extras = list(dict.fromkeys(new if n == old else n for n in extras))
             save_extra_projects(extras)
-        # Rename on tasks that use it (no-op / fail if none — stash-only is fine).
-        if old in list_projects():
-            return mutate_and_export(task_cmd(f"project:{old}", "modify", f"project:{new}"))
+
+        # Cascade: every task with project==old (any status) gets project:new.
+        uuids, _err = project_task_uuids(old)
+        if old in list_projects() or uuids:
+            return mutate_and_export(cascade_set_project(old, new))
         return cmd_export(argparse.Namespace())
 
     if action == "clear":
@@ -1189,8 +1231,8 @@ def cmd_projects(args: argparse.Namespace) -> int:
             return err_json("project name required")
         extras = [n for n in load_extra_projects() if n != old]
         save_extra_projects(extras)
-        if old in list_projects():
-            return mutate_and_export(task_cmd(f"project:{old}", "modify", "project:"))
+        if old in list_projects() or project_task_uuids(old)[0]:
+            return mutate_and_export(cascade_set_project(old, None))
         return cmd_export(argparse.Namespace())
 
     return err_json(f"unknown projects action: {action}")
