@@ -139,7 +139,7 @@ Please do **not** paste secrets, tokens, or private task content.
 
 ## License
 
-No explicit license file yet — all rights reserved by the author unless stated otherwise. Contributions and issues are welcome via GitHub.
+[MIT](LICENSE) — free to use, copy, modify, merge, publish, distribute, sublicense, and sell. Keep the copyright notice.
 
 ## Author
 
