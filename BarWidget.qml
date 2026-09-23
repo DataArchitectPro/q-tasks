@@ -61,8 +61,12 @@ BarWidget {
     if (data && data.label && !count)
       root.pillLabel = String(data.label)
     var tip = String((data && data.tooltip) || "")
+    if (!tip)
+      tip = "Taskwarrior Time"
+    else if (tip.indexOf("Taskwarrior Time") !== 0)
+      tip = "Taskwarrior Time · " + tip
     if (root.debugLogging)
-      tip = (tip ? (tip + "\n") : "") + "Debug log ON → " + (root.debugLogPath || "~/.local/share/q.tasks/debug.log")
+      tip = tip + "\nDebug log ON → " + (root.debugLogPath || "~/.local/share/q.tasks/debug.log")
     root.pillTooltip = tip
   }
 

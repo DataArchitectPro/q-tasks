@@ -875,11 +875,16 @@ def cmd_export(_: argparse.Namespace, extra: dict | None = None) -> int:
     icon = "\uf0ae"
     label = f"{icon}  {label_count}" if count else icon
 
-    tooltip = (
-        active_desc
-        if active_desc
-        else (f"Taskwarrior Time · {count} pending" if count else "Taskwarrior Time")
-    )
+    # Always lead with the product name so a running task description
+    # (e.g. "Omarchy") is never mistaken for the widget brand.
+    if active_desc and count:
+        tooltip = f"Taskwarrior Time · {active_desc} · {count} pending"
+    elif active_desc:
+        tooltip = f"Taskwarrior Time · {active_desc}"
+    elif count:
+        tooltip = f"Taskwarrior Time · {count} pending"
+    else:
+        tooltip = "Taskwarrior Time"
 
     payload = {
         "ok": True,
