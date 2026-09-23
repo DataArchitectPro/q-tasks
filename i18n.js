@@ -1,4 +1,4 @@
-// Locale-aware strings for q.tasks. Russian when system locale is ru*, else English.
+// Locale-aware strings for Taskwarrior Time (plugin id: q.tasks).
 
 function isRussian(localeName) {
   var candidates = []
@@ -31,8 +31,8 @@ function t(key, localeName, uiLanguage) {
   else if (mode === "en") ru = false
   else ru = isRussian(localeName)
   var en = {
-    title: "Tasks",
-    titleInProgress: "Tasks in progress",
+    title: "Taskwarrior Time",
+    titleInProgress: "Taskwarrior Time",
     projects: "Projects",
     filterAll: "All",
     filterActive: "Active",
@@ -143,7 +143,7 @@ function t(key, localeName, uiLanguage) {
     dateTime: "Time",
     dateClear: "Clear",
     about: "About",
-    aboutTitle: "About q.tasks",
+    aboutTitle: "About Taskwarrior Time",
     aboutVersion: "Version",
     aboutDeveloper: "Developer",
     aboutDeveloperName: "DataArchitectPro",
@@ -159,8 +159,8 @@ function t(key, localeName, uiLanguage) {
     uiLanguageEn: "English",
   }
   var ruMap = {
-    title: "Задачи",
-    titleInProgress: "Задачи в работе",
+    title: "Taskwarrior Time",
+    titleInProgress: "Taskwarrior Time",
     projects: "Проекты",
     filterAll: "Все",
     filterActive: "Активные",
@@ -271,7 +271,7 @@ function t(key, localeName, uiLanguage) {
     dateTime: "Время",
     dateClear: "Очистить",
     about: "О плагине",
-    aboutTitle: "О плагине q.tasks",
+    aboutTitle: "О плагине Taskwarrior Time",
     aboutVersion: "Версия",
     aboutDeveloper: "Разработчик",
     aboutDeveloperName: "DataArchitectPro",

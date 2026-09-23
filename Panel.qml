@@ -383,13 +383,11 @@ Panel {
     var lang = loc.split(".")[0].split("_")[0]
     return lang === "ru"
   }
-  // Prefer i18n; if a stale module still returns English on a Russian UI, override.
+  // Prefer i18n; if a stale module still returns an old title, override.
   readonly property string tasksHeaderTitle: {
     var s = root.tr("titleInProgress")
-    if (root.uiRussian && (s === "Tasks in progress" || s === "titleInProgress"))
-      return "Задачи в работе"
-    if (!root.uiRussian && s === "titleInProgress")
-      return "Tasks in progress"
+    if (s === "titleInProgress" || s === "Tasks in progress" || s === "Задачи в работе" || s === "Tasks")
+      return "Taskwarrior Time"
     return s
   }
 

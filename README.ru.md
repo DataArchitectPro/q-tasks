@@ -1,14 +1,14 @@
-# q.tasks
+# Taskwarrior Time
 
 [English](README.md) · **Русский**
 
-Виджет панели [Omarchy](https://omarchy.org/), который выносит **Taskwarrior** и **Timewarrior** в shell. Создавайте, редактируйте, фильтруйте задачи и учитывайте время, не покидая рабочий стол.
+**Taskwarrior Time** — виджет панели [Omarchy](https://omarchy.org/), который выносит **Taskwarrior** и **Timewarrior** в shell. Создавайте, редактируйте, фильтруйте задачи и учитывайте время, не покидая рабочий стол.
 
-![Панель q.tasks](docs/screenshots/ru/00-hero.png)
+![Панель Taskwarrior Time](docs/screenshots/ru/00-hero.png)
 
 ## Что это такое
 
-`q.tasks` — **графическая надстройка** над привычным консольным стеком задач, а не отдельная база.
+**Taskwarrior Time** (id плагина `q.tasks`) — **графическая надстройка** над привычным консольным стеком задач, а не отдельная база.
 
 | Компонент | Роль |
 | --- | --- |
@@ -93,7 +93,7 @@ omarchy plugin enable q.tasks --section right
 omarchy restart shell
 ```
 
-Идентификатор плагина — `q.tasks` (имя папки в `~/.config/omarchy/plugins/`).
+Идентификатор плагина — `q.tasks` (имя папки в `~/.config/omarchy/plugins/`). Отображаемое имя в marketplace — **Taskwarrior Time**.
 
 ## Обновление
 
@@ -122,7 +122,7 @@ omarchy plugin remove q.tasks
 
 ## Использование
 
-1. ЛКМ по иконке задач на панели — открыть окно.
+1. ЛКМ по иконке Taskwarrior Time на панели — открыть окно.
 2. В шапке переключайте **Задачи** / **Проекты**.
 3. Раскройте **Фильтр**, если нужны статус / проект / приоритет / срок / таймер / зависимости или поиск.
 4. Клик по задаче раскрывает редактор; внизу карточки — **Сохранить**, **Отмена**, **Удалить**.
@@ -151,7 +151,7 @@ omarchy plugin remove q.tasks
 
 1. Посмотрите [существующие issues](https://github.com/DataArchitectPro/q-tasks/issues).
 2. Создайте [новый issue](https://github.com/DataArchitectPro/q-tasks/issues/new) и укажите:
-   - версию Omarchy / плагина (см. О плагине)
+   - версию Omarchy / Taskwarrior Time (см. О плагине)
    - шаги воспроизведения
    - ожидаемое и фактическое поведение
    - по желанию: обезличенный фрагмент из `~/.local/share/q.tasks/debug.log`

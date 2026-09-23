@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""q.tasks helper — JSON bridge between Omarchy Quickshell UI and task/timew."""
+"""Taskwarrior Time helper — JSON bridge between Omarchy Quickshell UI and task/timew.
+
+Plugin id: q.tasks
+"""
 
 from __future__ import annotations
 
@@ -872,7 +875,11 @@ def cmd_export(_: argparse.Namespace, extra: dict | None = None) -> int:
     icon = "\uf0ae"
     label = f"{icon}  {label_count}" if count else icon
 
-    tooltip = active_desc if active_desc else (f"{count} pending" if count else "No pending tasks")
+    tooltip = (
+        active_desc
+        if active_desc
+        else (f"Taskwarrior Time · {count} pending" if count else "Taskwarrior Time")
+    )
 
     payload = {
         "ok": True,

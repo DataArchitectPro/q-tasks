@@ -1,14 +1,14 @@
-# q.tasks
+# Taskwarrior Time
 
 **English** · [Русский](README.ru.md)
 
-Bar widget for [Omarchy](https://omarchy.org/) that brings **Taskwarrior** and **Timewarrior** into the shell panel. Create, edit, filter, and time-track tasks without leaving the desktop.
+**Taskwarrior Time** is an [Omarchy](https://omarchy.org/) bar widget that brings **Taskwarrior** and **Timewarrior** into the shell panel. Create, edit, filter, and time-track tasks without leaving the desktop.
 
-![q.tasks panel](docs/screenshots/en/00-hero.png)
+![Taskwarrior Time panel](docs/screenshots/en/00-hero.png)
 
 ## What this is
 
-`q.tasks` is a **GUI companion** for the classic CLI task stack — not a separate task database.
+**Taskwarrior Time** (plugin id `q.tasks`) is a **GUI companion** for the classic CLI task stack — not a separate task database.
 
 | Component | Role |
 | --- | --- |
@@ -93,7 +93,7 @@ omarchy plugin enable q.tasks --section right
 omarchy restart shell
 ```
 
-The plugin id is `q.tasks` (folder name under `~/.config/omarchy/plugins/`).
+The plugin id is `q.tasks` (folder name under `~/.config/omarchy/plugins/`). The marketplace display name is **Taskwarrior Time**.
 
 ## Update
 
@@ -122,7 +122,7 @@ This disables the widget and deletes the git checkout under `~/.config/omarchy/p
 
 ## Usage
 
-1. Left-click the tasks icon on the bar to open the panel.
+1. Left-click the Taskwarrior Time icon on the bar to open the panel.
 2. Use **Tasks** / **Projects** in the header to switch views.
 3. Expand **Filter** when you need status / project / priority / due / timer / deps or search.
 4. Click a task to expand the editor; **Save**, **Cancel**, or **Delete** at the bottom of the card.
@@ -151,7 +151,7 @@ If you hit a bug, a crash, wrong Taskwarrior/Timewarrior behavior, or a missing 
 
 1. Check [existing issues](https://github.com/DataArchitectPro/q-tasks/issues).
 2. Open a [new issue](https://github.com/DataArchitectPro/q-tasks/issues/new) with:
-   - Omarchy / plugin version (see About)
+   - Omarchy / Taskwarrior Time version (see About)
    - Steps to reproduce
    - Expected vs actual behavior
    - Optional: a redacted snippet from `~/.local/share/q.tasks/debug.log`
