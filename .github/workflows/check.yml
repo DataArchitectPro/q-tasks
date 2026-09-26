@@ -1,0 +1,38 @@
+name: Check
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: validate + qmllint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+
+      - name: Install jq + qmllint
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq qt6-declarative-dev
+
+      - name: Checkout Omarchy shell (qmllint import path)
+        uses: actions/checkout@v4
+        with:
+          repository: basecamp/omarchy
+          path: .ci/omarchy
+          sparse-checkout: |
+            shell
+          sparse-checkout-cone-mode: true
+
+      - name: Run checks
+        env:
+          OMARCHY_PATH: ${{ github.workspace }}/.ci/omarchy
+        run: |
+          chmod +x scripts/check scripts/validate-plugin
+          ./scripts/check

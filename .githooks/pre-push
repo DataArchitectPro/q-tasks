@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Block git push when local plugin checks fail.
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+exec "$ROOT/scripts/check"

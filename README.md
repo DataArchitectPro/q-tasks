@@ -178,6 +178,17 @@ If you hit a bug, a crash, wrong Taskwarrior/Timewarrior behavior, or a missing 
 
 Please do **not** paste secrets, tokens, or private task content.
 
+## Development checks
+
+From a clone of this repository:
+
+```bash
+./scripts/install-hooks   # once per clone — enables pre-push checks
+./scripts/check           # manifest validate + qmllint
+```
+
+`git push` runs the same checks via `.githooks/pre-push` and aborts if they fail. GitHub Actions runs `./scripts/check` on push and pull requests.
+
 ## License
 
 [MIT](LICENSE) — free to use, copy, modify, merge, publish, distribute, sublicense, and sell. Keep the copyright notice.

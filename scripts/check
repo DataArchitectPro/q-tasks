@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Local + CI checks for Taskwarrior Time (Omarchy plugin).
+# - manifest validate (omarchy plugin validate, or portable fallback)
+# - qmllint on plugin QML (requires qmllint + Omarchy shell import path)
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
+FAILED=0
+
+section() {
+  printf '\n==> %s\n' "$*"
+}
+
+# --- 1) Manifest validation -------------------------------------------------
+section "omarchy plugin validate"
+
+if command -v omarchy-plugin-validate >/dev/null 2>&1; then
+  if omarchy-plugin-validate "$ROOT"; then
+    echo "omarchy-plugin-validate: OK"
+  else
+    echo "omarchy-plugin-validate: FAILED" >&2
+    FAILED=1
+  fi
+elif command -v omarchy >/dev/null 2>&1; then
+  if omarchy plugin validate "$ROOT"; then
+    echo "omarchy plugin validate: OK"
+  else
+    echo "omarchy plugin validate: FAILED" >&2
+    FAILED=1
+  fi
+else
+  if "$ROOT/scripts/validate-plugin" "$ROOT"; then
+    :
+  else
+    FAILED=1
+  fi
+fi
+
+# --- 2) qmllint -------------------------------------------------------------
+section "qmllint"
+
+find_qmllint() {
+  if command -v qmllint >/dev/null 2>&1; then
+    command -v qmllint
+    return 0
+  fi
+  for candidate in /usr/lib/qt6/bin/qmllint /usr/lib64/qt6/bin/qmllint; do
+    if [[ -x $candidate ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+QML_FILES=()
+while IFS= read -r -d '' f; do
+  QML_FILES+=("$f")
+done < <(find "$ROOT" -maxdepth 1 -type f -name '*.qml' -print0 | sort -z)
+
+if ((${#QML_FILES[@]} == 0)); then
+  echo "qmllint: no QML files found" >&2
+  FAILED=1
+elif ! QMLLINT=$(find_qmllint); then
+  echo "qmllint: not found (install qt6-declarative / Qt qmllint)" >&2
+  FAILED=1
+elif [[ ! -d "$OMARCHY_PATH/shell" ]]; then
+  echo "qmllint: Omarchy shell not found at $OMARCHY_PATH/shell" >&2
+  echo "  Set OMARCHY_PATH to your Omarchy install (default: /usr/share/omarchy)" >&2
+  FAILED=1
+else
+  # Import noise from qs.* without a live Quickshell session is expected;
+  # fail only when qmllint returns non-zero (syntax / hard errors).
+  lint_log="$(mktemp)"
+  if "$QMLLINT" -I "$OMARCHY_PATH/shell" "${QML_FILES[@]}" >"$lint_log" 2>&1; then
+    echo "qmllint: OK (${#QML_FILES[@]} files, OMARCHY_PATH=$OMARCHY_PATH)"
+    rm -f "$lint_log"
+  else
+    cat "$lint_log" >&2
+    rm -f "$lint_log"
+    echo "qmllint: FAILED" >&2
+    FAILED=1
+  fi
+fi
+
+# --- summary ----------------------------------------------------------------
+section "summary"
+if ((FAILED)); then
+  echo "checks FAILED"
+  exit 1
+fi
+echo "checks PASSED"
+exit 0
