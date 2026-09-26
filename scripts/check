@@ -74,9 +74,10 @@ elif [[ ! -d "$OMARCHY_PATH/shell" ]]; then
   FAILED=1
 else
   # Omarchy qs.* imports produce many unresolved-type warnings under stock
-  # qmllint; -W -1 keeps those as non-fatal. Syntax/hard errors still fail.
+  # qmllint. .qmllint.ini sets MaxWarnings=-1 so they stay non-fatal;
+  # syntax/hard errors still fail the process.
   lint_log="$(mktemp)"
-  if "$QMLLINT" -W -1 -I "$OMARCHY_PATH/shell" "${QML_FILES[@]}" >"$lint_log" 2>&1; then
+  if "$QMLLINT" -I "$OMARCHY_PATH/shell" "${QML_FILES[@]}" >"$lint_log" 2>&1; then
     echo "qmllint: OK (${#QML_FILES[@]} files, OMARCHY_PATH=$OMARCHY_PATH)"
     rm -f "$lint_log"
   else
