@@ -68,8 +68,11 @@ Panel {
   property string uiLanguage: "system" // system | ru | en
   property var _logQueue: []
   property bool _logFlushScheduled: false
-  readonly property string pluginVersion: "1.0.0"
+  readonly property string pluginVersion: "1.0.1"
   readonly property string githubUrl: "https://github.com/DataArchitectPro/taskwarrior-time"
+  readonly property string changelogUrl: "https://github.com/DataArchitectPro/taskwarrior-time/blob/master/CHANGELOG.md"
+  readonly property string newIssueUrl: "https://github.com/DataArchitectPro/taskwarrior-time/issues/new"
+  readonly property string marketplaceUrl: "https://plugins.omarchy.org/plugin.html?id=taskwarrior-time"
 
   readonly property bool editDirty: {
     // Touch every draft field so the binding re-evaluates on edits.
@@ -915,7 +918,7 @@ Panel {
       var raw = String(text || "")
       if (raw.length > root.maxSnapshotChars) {
         root.lastError = "snapshot exceeds size limit"
-        root.dlog("snapshot.reject", { bytes: raw.length })
+        root.dlog("snapshot.reject", { bytes: raw.length, limit: root.maxSnapshotChars }, "error")
         root.editGuard = false
         return
       }
@@ -937,10 +940,18 @@ Panel {
         replaced: replaced,
         reseed: !!reseedUuid,
         tasks: (data.tasks && data.tasks.length) || 0,
+        pending: data.pending,
+        waiting: data.waiting,
+        ok: data.ok !== false,
+        available: !!data.available,
+        timewAvailable: !!data.timewAvailable,
         error: root.lastError,
+        viewMode: root.viewMode,
+        groupBy: root.groupBy,
+        pluginVersion: root.pluginVersion,
         expandedUuid: root.expandedUuid,
         expandedDepends: expandedTask ? Model.toJsArray(expandedTask.depends) : []
-      })
+      }, root.lastError ? "warn" : "info")
       if (!replaced)
         root._preserveContentY = -1
       if (reseedUuid) {
@@ -963,7 +974,7 @@ Panel {
       root.editGuard = false
       root._preserveContentY = -1
       root.lastError = String(e)
-      root.dlog("snapshot.error", { error: String(e) })
+      root.dlog("snapshot.error", { error: String(e), pluginVersion: root.pluginVersion }, "error")
       console.warn("taskwarrior-time: bad JSON", e)
     }
   }
@@ -1007,11 +1018,15 @@ Panel {
     return out
   }
 
-  function dlog(event, detail) {
+  function dlog(event, detail, level) {
     if (!root.debugLogging) return
     var payload = detail && typeof detail === "object" ? detail : {}
+    var lvl = String(level || "info").toLowerCase()
+    if (lvl !== "debug" && lvl !== "info" && lvl !== "warn" && lvl !== "error")
+      lvl = "info"
     root._logQueue = (root._logQueue || []).concat([{
       event: String(event || "log"),
+      level: lvl,
       json: JSON.stringify(payload)
     }])
     if (!root._logFlushScheduled) {
@@ -1038,6 +1053,8 @@ Panel {
     debugLogProc.command = [
       root.helperPath, "debug-log",
       "--event", item.event,
+      "--level", item.level || "info",
+      "--component", "ui",
       "--json", item.json
     ]
     debugLogProc.running = true
@@ -1050,6 +1067,34 @@ Panel {
       enabled ? "--debug-logging" : "--no-debug-logging"
     ]
     settingsSetProc.running = true
+  }
+
+  function debugLogDir() {
+    var p = String(root.debugLogPath || "").trim()
+    if (p) {
+      var slash = p.lastIndexOf("/")
+      if (slash > 0)
+        return p.substring(0, slash)
+    }
+    var home = ""
+    try { home = String(Quickshell.env("HOME") || "") } catch (e) { home = "" }
+    return (home || ".") + "/.local/share/taskwarrior-time"
+  }
+
+  function openDebugLogFolder() {
+    var dir = root.debugLogDir()
+    // Omarchy apps must go through uwsm-app; plain xdg-open often fails from
+    // the shell process, and xdg-open rejects a "--" end-of-options marker.
+    Quickshell.execDetached([
+      "bash", "-lc",
+      'mkdir -p -- "$1" && exec setsid uwsm-app -- nautilus --new-window "$1"',
+      "taskwarrior-time-open-log-dir",
+      dir
+    ])
+  }
+
+  function clearDebugLogs() {
+    Quickshell.execDetached([root.helperPath, "debug-log-clear"])
   }
 
   function setUiLanguage(lang) {
@@ -1150,7 +1195,7 @@ Panel {
     })
     if (!uuid || !dep || dep === "[object Object]") {
       root.lastError = "deps: missing uuid"
-      root.dlog("deps.add.reject", { uuid: uuid, dep: dep })
+      root.dlog("deps.add.reject", { uuid: uuid, dep: dep }, "warn")
       return
     }
     root.lastError = ""
@@ -1173,7 +1218,7 @@ Panel {
     })
     if (!uuid || !dep || dep === "[object Object]") {
       root.lastError = "deps: missing uuid"
-      root.dlog("deps.remove.reject", { uuid: uuid, dep: dep })
+      root.dlog("deps.remove.reject", { uuid: uuid, dep: dep }, "warn")
       return
     }
     root.lastError = ""
@@ -1433,7 +1478,7 @@ Panel {
         root.dlog("export.done", { bytes: bytes })
         if (bytes > root.maxSnapshotChars) {
           root.lastError = "snapshot exceeds size limit"
-          root.dlog("export.reject", { bytes: bytes })
+          root.dlog("export.reject", { bytes: bytes, limit: root.maxSnapshotChars }, "error")
         } else {
           root.applyData(text)
         }
@@ -1441,7 +1486,7 @@ Panel {
       }
     }
     onExited: function(code) {
-      root.dlog("export.exit", { code: code })
+      root.dlog("export.exit", { code: code }, code === 0 ? "info" : "warn")
       Qt.callLater(root._drainCmdQueue)
     }
   }
@@ -1464,7 +1509,7 @@ Panel {
         root.busyUuid = ""
         if (bytes > root.maxSnapshotChars) {
           root.lastError = "snapshot exceeds size limit"
-          root.dlog("cmd.reject", { bytes: bytes })
+          root.dlog("cmd.reject", { bytes: bytes, limit: root.maxSnapshotChars, ms: ms }, "error")
         } else {
           root.applyData(text)
         }
@@ -1473,7 +1518,7 @@ Panel {
     }
     onExited: function(code) {
       var ms = root._cmdStartedAt ? (Date.now() - root._cmdStartedAt) : -1
-      root.dlog("cmd.exit", { code: code, ms: ms })
+      root.dlog("cmd.exit", { code: code, ms: ms }, code === 0 ? "info" : "warn")
       root.busyUuid = ""
       if (code !== 0) root.refresh()
       Qt.callLater(root._drainCmdQueue)
@@ -1502,9 +1547,15 @@ Panel {
           if (data.uiLanguage === "ru" || data.uiLanguage === "en" || data.uiLanguage === "system")
             root.uiLanguage = String(data.uiLanguage)
           if (root.debugLogging)
-            root.dlog("ui.settings.loaded", { sessionId: root.debugSessionId })
+            root.dlog("ui.settings.loaded", {
+              sessionId: root.debugSessionId,
+              pluginVersion: root.pluginVersion,
+              uiLanguage: root.uiLanguage,
+              logPath: root.debugLogPath
+            })
         } catch (e) {
           console.warn("taskwarrior-time: settings-get", e)
+          root.dlog("ui.settings.error", { error: String(e), source: "get" }, "error")
         }
       }
     }
@@ -1524,9 +1575,15 @@ Panel {
             root.uiLanguage = String(data.uiLanguage)
           // Banner already written by helper on enable; acknowledge from UI.
           if (root.debugLogging)
-            root.dlog("ui.settings.enabled", { sessionId: root.debugSessionId })
+            root.dlog("ui.settings.enabled", {
+              sessionId: root.debugSessionId,
+              pluginVersion: root.pluginVersion,
+              uiLanguage: root.uiLanguage,
+              logPath: root.debugLogPath
+            })
         } catch (e) {
           console.warn("taskwarrior-time: settings-set", e)
+          root.dlog("ui.settings.error", { error: String(e), source: "set" }, "error")
         }
       }
     }
@@ -2183,9 +2240,17 @@ Panel {
                 var details = editDetailsArea.text
                 if (details !== "") root.editDetails = details
                 if (editorHydrated) {
-                  root.editWaitingFor = waitingForField.text
-                  if (outcomeField)
-                    root.editOutcome = outcomeField.text
+                  // Same rule as description/details: never blank a non-empty
+                  // buffer with an empty widget (common while the status-gated
+                  // waitingFor / outcome fields are not visible yet).
+                  var waitingForText = waitingForField.text
+                  if (waitingForText !== "" || (waitingForField.visible && waitingForField.width > 0))
+                    root.editWaitingFor = waitingForText
+                  if (outcomeField) {
+                    var outcomeText = outcomeField.text
+                    if (outcomeText !== "" || (outcomeField.visible && outcomeField.width > 0))
+                      root.editOutcome = outcomeText
+                  }
                   root.editPriority = editPriority.value
                   root.editProject = editProject.value
                   var sched = editScheduled.text
@@ -2194,6 +2259,39 @@ Panel {
                   var due = editDue.text
                   if (due !== "" || root.editDue === "")
                     root.editDue = due
+                }
+              }
+
+              function syncStatusGatedFields() {
+                if (!editorHydrated || suppressDraftPersist) return
+                var v = root.editValues()
+                if (waitingForField.visible) {
+                  var wantWaiting = String(
+                    v.waitingFor
+                    || (rowRoot.task && rowRoot.task.waitingFor)
+                    || ""
+                  )
+                  if (waitingForField.text !== wantWaiting) {
+                    suppressDraftPersist = true
+                    waitingForField.text = wantWaiting
+                    suppressDraftPersist = false
+                    if (wantWaiting && !root.editWaitingFor)
+                      root.editWaitingFor = wantWaiting
+                  }
+                }
+                if (outcomeField && outcomeField.visible) {
+                  var wantOutcome = String(
+                    v.outcome
+                    || (rowRoot.task && rowRoot.task.outcome)
+                    || ""
+                  )
+                  if (outcomeField.text !== wantOutcome) {
+                    suppressDraftPersist = true
+                    outcomeField.text = wantOutcome
+                    suppressDraftPersist = false
+                    if (wantOutcome && !root.editOutcome)
+                      root.editOutcome = wantOutcome
+                  }
                 }
               }
 
@@ -2209,6 +2307,9 @@ Panel {
                 editScheduled.text = v.scheduled || ""
                 editDue.text = v.due || ""
                 suppressDraftPersist = false
+                // Status-gated fields may still be invisible on first hydrate;
+                // re-apply once they show (see onVisibleChanged below).
+                Qt.callLater(function () { rowRoot.syncStatusGatedFields() })
               }
 
               function hydrateEditor(fromTaskOnly) {
@@ -2702,6 +2803,10 @@ Panel {
                         visible: !!(rowRoot.task && rowRoot.task.status === "waiting")
                         width: parent.width
                         spacing: Style.space(4)
+                        onVisibleChanged: {
+                          if (visible)
+                            Qt.callLater(function () { rowRoot.syncStatusGatedFields() })
+                        }
 
                         Text {
                           textFormat: Text.PlainText
@@ -2718,6 +2823,10 @@ Panel {
                           verticalPadding: Style.space(2)
                           onActiveFocusChanged: root.formFocused = activeFocus
                           onTextChanged: rowRoot.setEditField("waitingFor", text)
+                          onVisibleChanged: {
+                            if (visible)
+                              Qt.callLater(function () { rowRoot.syncStatusGatedFields() })
+                          }
                           Keys.onEscapePressed: function(event) { root.escapeFromField(event) }
                           onEditingFinished: {
                             if (!rowRoot.task) return
@@ -2740,6 +2849,10 @@ Panel {
                         visible: !!(rowRoot.task && rowRoot.task.status === "completed")
                         width: parent.width
                         spacing: Style.space(4)
+                        onVisibleChanged: {
+                          if (visible)
+                            Qt.callLater(function () { rowRoot.syncStatusGatedFields() })
+                        }
 
                         Text {
                           textFormat: Text.PlainText
@@ -2756,6 +2869,10 @@ Panel {
                           verticalPadding: Style.space(2)
                           onActiveFocusChanged: root.formFocused = activeFocus
                           onTextChanged: rowRoot.setEditField("outcome", text)
+                          onVisibleChanged: {
+                            if (visible)
+                              Qt.callLater(function () { rowRoot.syncStatusGatedFields() })
+                          }
                           Keys.onEscapePressed: function(event) { root.escapeFromField(event) }
                           onEditingFinished: {
                             if (!rowRoot.task) return
@@ -3961,91 +4078,130 @@ Panel {
           }
         }
 
-        // About view — same tab pattern as Tasks / Projects
+        // About view — hero + sections (links / language / debug)
         ColumnLayout {
           Layout.fillWidth: true
           Layout.fillHeight: true
-          spacing: Style.space(16)
+          spacing: 0
           visible: root.viewMode === "about"
 
-          Item { Layout.fillHeight: true; Layout.minimumHeight: Style.space(8) }
-
-          Column {
+          Flickable {
             Layout.fillWidth: true
-            Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
-            spacing: Style.space(16)
-
-            Text {
-              textFormat: Text.PlainText
-              width: parent.width
-              text: root.tr("aboutTitle")
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.title
-              font.bold: true
-              wrapMode: Text.WordWrap
-              horizontalAlignment: Text.AlignHCenter
-            }
+            Layout.fillHeight: true
+            clip: true
+            contentWidth: width
+            contentHeight: aboutBody.implicitHeight
+            boundsBehavior: Flickable.StopAtBounds
 
             Column {
+              id: aboutBody
               width: parent.width
-              spacing: Style.space(6)
+              spacing: Style.space(16)
+              topPadding: Style.space(8)
+              bottomPadding: Style.space(16)
 
-              Text {
-                textFormat: Text.PlainText
+              PanelHero {
                 width: parent.width
-                text: root.tr("aboutVersion") + ": " + root.pluginVersion
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                horizontalAlignment: Text.AlignHCenter
-              }
-
-              Text {
-                textFormat: Text.PlainText
-                width: parent.width
-                text: root.tr("aboutDeveloper") + ": " + root.tr("aboutDeveloperName")
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                horizontalAlignment: Text.AlignHCenter
-              }
-
-              Text {
-                textFormat: Text.PlainText
-                width: parent.width
-                text: root.tr("aboutGithub") + ": " + root.githubUrl
-                color: Color.accent
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                wrapMode: Text.WrapAnywhere
-                horizontalAlignment: Text.AlignHCenter
-
-                MouseArea {
-                  anchors.fill: parent
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: Qt.openUrlExternally(root.githubUrl)
+                title: root.tr("aboutTitle")
+                detail: "v" + root.pluginVersion
+                meta: root.tr("aboutDeveloper") + " · " + root.tr("aboutDeveloperName")
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                iconComponent: Component {
+                  Text {
+                    textFormat: Text.PlainText
+                    text: "\uf0ae"
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.display
+                  }
                 }
               }
-              }
+
+              PanelSeparator { foreground: root.foreground }
 
               Column {
-                width: Math.min(parent.width, Style.space(400))
-                anchors.horizontalCenter: parent.horizontalCenter
-                spacing: Style.space(6)
+                width: parent.width
+                spacing: Style.space(8)
 
-                Text {
-                  textFormat: Text.PlainText
+                PanelSectionHeader {
+                  text: root.tr("aboutLinks").toUpperCase()
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                }
+
+                Column {
                   width: parent.width
-                  text: root.tr("uiLanguage")
-                  color: root.dim
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  horizontalAlignment: Text.AlignHCenter
+                  spacing: Style.space(4)
+
+                  Button {
+                    width: parent.width
+                    text: root.tr("aboutChangelog")
+                    iconText: "\uf15c"
+                    bordered: true
+                    leftAlign: true
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.body
+                    verticalPadding: Style.space(6)
+                    horizontalPadding: Style.space(10)
+                    onClicked: Qt.openUrlExternally(root.changelogUrl)
+                  }
+                  Button {
+                    width: parent.width
+                    text: root.tr("aboutMarketplace")
+                    iconText: "\uf07a"
+                    bordered: true
+                    leftAlign: true
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.body
+                    verticalPadding: Style.space(6)
+                    horizontalPadding: Style.space(10)
+                    onClicked: Qt.openUrlExternally(root.marketplaceUrl)
+                  }
+                  Button {
+                    width: parent.width
+                    text: root.tr("aboutNewIssue")
+                    iconText: "\uf071"
+                    bordered: true
+                    leftAlign: true
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.body
+                    verticalPadding: Style.space(6)
+                    horizontalPadding: Style.space(10)
+                    onClicked: Qt.openUrlExternally(root.newIssueUrl)
+                  }
+                  Button {
+                    width: parent.width
+                    text: root.tr("aboutGithub")
+                    iconText: "\uf09b"
+                    bordered: true
+                    leftAlign: true
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.body
+                    verticalPadding: Style.space(6)
+                    horizontalPadding: Style.space(10)
+                    onClicked: Qt.openUrlExternally(root.githubUrl)
+                  }
+                }
+              }
+
+              PanelSeparator { foreground: root.foreground }
+
+              Column {
+                width: parent.width
+                spacing: Style.space(8)
+
+                PanelSectionHeader {
+                  text: root.tr("uiLanguage").toUpperCase()
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
                 }
 
                 Row {
-                  anchors.horizontalCenter: parent.horizontalCenter
                   spacing: Style.space(4)
 
                   Button {
@@ -4081,32 +4237,70 @@ Panel {
                 }
               }
 
-            Toggle {
-              width: Math.min(parent.width, Style.space(400))
-              anchors.horizontalCenter: parent.horizontalCenter
-              label: root.debugLogging ? root.tr("debugLogOn") : root.tr("debugLogOff")
-              description: root.debugLogPath || "~/.local/share/taskwarrior-time/debug.log"
-              checked: root.debugLogging
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              titleSize: Style.font.body
-              descriptionSize: Style.font.caption
-              onClicked: root.setDebugLogging(!root.debugLogging)
-            }
+              PanelSeparator { foreground: root.foreground }
 
-            Text {
-              textFormat: Text.PlainText
-              width: parent.width
-              text: root.tr("debugLogHint")
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-              horizontalAlignment: Text.AlignHCenter
+              Column {
+                width: parent.width
+                spacing: Style.space(8)
+
+                PanelSectionHeader {
+                  text: root.tr("debugLog").toUpperCase()
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                }
+
+                Toggle {
+                  width: parent.width
+                  label: root.debugLogging ? root.tr("debugLogOn") : root.tr("debugLogOff")
+                  description: root.debugLogPath || "~/.local/share/taskwarrior-time/debug.log"
+                  checked: root.debugLogging
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  titleSize: Style.font.body
+                  descriptionSize: Style.font.caption
+                  onClicked: root.setDebugLogging(!root.debugLogging)
+                }
+
+                Button {
+                  width: parent.width
+                  text: root.tr("aboutOpenLogFolder")
+                  iconText: "\uf07b"
+                  bordered: true
+                  leftAlign: true
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.body
+                  verticalPadding: Style.space(6)
+                  horizontalPadding: Style.space(10)
+                  onClicked: root.openDebugLogFolder()
+                }
+
+                Button {
+                  width: parent.width
+                  text: root.tr("aboutClearLogs")
+                  iconText: "\uf1f8"
+                  bordered: true
+                  leftAlign: true
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.body
+                  verticalPadding: Style.space(6)
+                  horizontalPadding: Style.space(10)
+                  onClicked: root.clearDebugLogs()
+                }
+
+                Text {
+                  textFormat: Text.PlainText
+                  width: parent.width
+                  text: root.tr("debugLogHint")
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+              }
             }
           }
-
-          Item { Layout.fillHeight: true; Layout.minimumHeight: Style.space(8) }
         }
       }
 

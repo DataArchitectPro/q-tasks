@@ -4,6 +4,8 @@
 
 **Taskwarrior Time** is an [Omarchy](https://omarchy.org/) bar widget that brings **Taskwarrior** and **Timewarrior** into the shell panel. Create, edit, filter, and time-track tasks without leaving the desktop.
 
+Marketplace: [plugins.omarchy.org/plugin.html?id=taskwarrior-time](https://plugins.omarchy.org/plugin.html?id=taskwarrior-time)
+
 ![Taskwarrior Time panel](docs/screenshots/en/00-hero.png)
 
 ## What this is
@@ -147,15 +149,21 @@ This disables the widget and deletes the git checkout under `~/.config/omarchy/p
 
 When something misbehaves, turn on debug logging from the **About** tab.
 
-- Toggle **Debug log: ON / OFF** on the About tab.
-- While enabled, the bar icon stays highlighted and the tooltip shows that logging is active.
-- Events are appended to:
+1. Open **About** → enable **Debug log**.
+2. Reproduce the bug once (a fresh session banner is written when logging starts).
+3. Use **Open log folder**, attach `~/.local/share/taskwarrior-time/debug.log` to your issue.
+4. Optionally **Clear logs** before a clean capture, then toggle logging again.
 
-  `~/.local/share/taskwarrior-time/debug.log`
+Each session file starts with a short human-readable banner plus environment facts:
 
-The log is local only (it is not uploaded). Include relevant excerpts when you open a GitHub issue — they help reproduce UI and helper (`bin/taskwarrior-time`) problems.
+- plugin id / version
+- Taskwarrior, Timewarrior, and Omarchy versions (when available)
+- OS / desktop / locale / UI language
+- data and log paths
 
-To turn logging off, open the **About** tab again and toggle it back to OFF (or delete/ignore the log file; the toggle controls whether new events are written).
+Then events are appended as **NDJSON** (one JSON object per line) with `level` (`info` / `warn` / `error`), `component` (`ui` / `helper` / `system`), `event`, and `detail`. Long free-text is truncated so logs stay safe to share — still avoid pasting secrets or private task content.
+
+The log is local only (it is not uploaded). Toggle logging **OFF** when you are done.
 
 ## Reporting issues
 
@@ -166,7 +174,7 @@ If you hit a bug, a crash, wrong Taskwarrior/Timewarrior behavior, or a missing 
    - Omarchy / Taskwarrior Time version (see About)
    - Steps to reproduce
    - Expected vs actual behavior
-   - Optional: a redacted snippet from `~/.local/share/taskwarrior-time/debug.log`
+   - The full `~/.local/share/taskwarrior-time/debug.log` from a session with Debug logging ON (banner includes dependency versions)
 
 Please do **not** paste secrets, tokens, or private task content.
 
@@ -176,4 +184,4 @@ Please do **not** paste secrets, tokens, or private task content.
 
 ## Author
 
-**DataArchitectPro** — [GitHub repository](https://github.com/DataArchitectPro/taskwarrior-time)
+**DataArchitectPro** — [GitHub repository](https://github.com/DataArchitectPro/taskwarrior-time) · [Omarchy marketplace](https://plugins.omarchy.org/plugin.html?id=taskwarrior-time)

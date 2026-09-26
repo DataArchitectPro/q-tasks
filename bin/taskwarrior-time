@@ -568,6 +568,8 @@ DATA_DIR = Path.home() / ".local" / "share" / "taskwarrior-time"
 UI_SETTINGS_PATH = DATA_DIR / "ui-settings.json"
 DEBUG_LOG_PATH = DATA_DIR / "debug.log"
 DEBUG_LOG_MAX_BYTES = 2 * 1024 * 1024
+LOG_SCHEMA_VERSION = 1
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 # Legacy path inside the plugin dir triggered Omarchy hot-reload on every write.
 _LEGACY_EXTRA_PROJECTS_PATH = (
     Path.home() / ".config" / "omarchy" / "plugins" / "taskwarrior-time" / "extra-projects.json"
@@ -609,10 +611,103 @@ def load_ui_settings() -> dict[str, Any]:
 
 def save_ui_settings(settings: dict[str, Any]) -> None:
     ensure_data_dir()
+    payload = {
+        "debugLogging": bool(settings.get("debugLogging")),
+        "sessionId": str(settings.get("sessionId") or ""),
+        "sessionStartedAt": str(settings.get("sessionStartedAt") or ""),
+        "uiLanguage": _normalize_ui_language(settings.get("uiLanguage")),
+    }
     UI_SETTINGS_PATH.write_text(
-        json.dumps(settings, ensure_ascii=False, indent=2) + "\n",
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+
+
+def _run_version_cmd(cmd: list[str]) -> str:
+    try:
+        proc = run(cmd, timeout=2.0)
+    except Exception:
+        return ""
+    out = (proc.stdout or "").strip().splitlines()
+    if not out:
+        out = (proc.stderr or "").strip().splitlines()
+    return clip_str(out[0] if out else "", 120)
+
+
+def read_plugin_manifest() -> dict[str, Any]:
+    path = PLUGIN_ROOT / "manifest.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def collect_env_fingerprint() -> dict[str, Any]:
+    """Versions and host facts for issue triage — written once per debug session."""
+    manifest = read_plugin_manifest()
+    uname = os.uname()
+    locale_env = (
+        os.environ.get("LC_ALL")
+        or os.environ.get("LC_MESSAGES")
+        or os.environ.get("LANG")
+        or ""
+    )
+    return {
+        "pluginId": clip_str(manifest.get("id") or "taskwarrior-time", 64),
+        "pluginVersion": clip_str(manifest.get("version") or "unknown", 32),
+        "pluginName": clip_str(manifest.get("name") or "Taskwarrior Time", 64),
+        "manifestSchema": int(manifest.get("schemaVersion") or 0),
+        "helper": "bin/taskwarrior-time",
+        "logSchema": LOG_SCHEMA_VERSION,
+        "python": clip_str(sys.version.split()[0], 32),
+        "platform": clip_str(sys.platform, 32),
+        "os": clip_str(f"{uname.sysname} {uname.release}", 120),
+        "machine": clip_str(uname.machine, 32),
+        "desktop": clip_str(
+            os.environ.get("XDG_CURRENT_DESKTOP")
+            or os.environ.get("XDG_SESSION_DESKTOP")
+            or "",
+            64,
+        ),
+        "sessionType": clip_str(os.environ.get("XDG_SESSION_TYPE") or "", 32),
+        "wayland": clip_str(os.environ.get("WAYLAND_DISPLAY") or "", 64),
+        "locale": clip_str(locale_env, 64),
+        "uiLanguage": _normalize_ui_language(load_ui_settings().get("uiLanguage")),
+        "taskAvailable": which("task"),
+        "timewAvailable": which("timew"),
+        "taskVersion": _run_version_cmd(["task", "--version"]) if which("task") else "",
+        "timewVersion": _run_version_cmd(["timew", "--version"]) if which("timew") else "",
+        "omarchyVersion": _run_version_cmd(["omarchy", "version"]) if which("omarchy") else "",
+        "home": clip_str(str(Path.home()), 200),
+        "dataDir": clip_str(str(DATA_DIR), 200),
+        "logPath": clip_str(str(DEBUG_LOG_PATH), 200),
+        "pluginRoot": clip_str(str(PLUGIN_ROOT), 200),
+    }
+
+
+def _sanitize_log_value(value: Any, *, depth: int = 0) -> Any:
+    """Keep log payloads small and free of huge free-text dumps."""
+    if depth > 3:
+        return "…"
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return clip_str(value, MAX_SHORT_STRING_LEN)
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for i, (k, v) in enumerate(value.items()):
+            if i >= 40:
+                out["_truncated"] = True
+                break
+            out[clip_str(str(k), 64)] = _sanitize_log_value(v, depth=depth + 1)
+        return out
+    if isinstance(value, (list, tuple)):
+        items = [_sanitize_log_value(v, depth=depth + 1) for v in list(value)[:40]]
+        if len(value) > 40:
+            items.append({"_truncated": True, "len": len(value)})
+        return items
+    return clip_str(str(value), MAX_SHORT_STRING_LEN)
 
 
 def _rotate_debug_log_if_needed() -> None:
@@ -626,8 +721,33 @@ def _rotate_debug_log_if_needed() -> None:
         pass
 
 
-def append_debug_log(event: str, detail: dict[str, Any] | None = None) -> None:
-    """Append one structured line. Safe to call even when logging is off (caller gates)."""
+def _write_human_banner(fh, env: dict[str, Any], session_id: str, started_at: str) -> None:
+    """Human-readable preamble so issue readers see context without parsing JSON."""
+    lines = [
+        "# Taskwarrior Time — debug log (NDJSON)",
+        f"# logSchema={LOG_SCHEMA_VERSION}  session={session_id}  started={started_at}",
+        f"# plugin={env.get('pluginId')} {env.get('pluginVersion')}"
+        f"  task={env.get('taskVersion') or 'n/a'}"
+        f"  timew={env.get('timewVersion') or 'n/a'}"
+        f"  omarchy={env.get('omarchyVersion') or 'n/a'}",
+        f"# os={env.get('os')}  desktop={env.get('desktop') or 'n/a'}"
+        f"  locale={env.get('locale') or 'n/a'}  uiLanguage={env.get('uiLanguage')}",
+        f"# log={env.get('logPath')}",
+        "# Attach this whole file to a GitHub issue. Redact private task text if needed.",
+        "# Format: one JSON object per line after this banner.",
+        "#",
+    ]
+    fh.write("\n".join(lines) + "\n")
+
+
+def append_debug_log(
+    event: str,
+    detail: dict[str, Any] | None = None,
+    *,
+    level: str = "info",
+    component: str = "helper",
+) -> None:
+    """Append one structured NDJSON line. Caller gates whether logging is enabled."""
     ensure_data_dir()
     _rotate_debug_log_if_needed()
     settings = load_ui_settings()
@@ -637,20 +757,53 @@ def append_debug_log(event: str, detail: dict[str, Any] | None = None) -> None:
     if started:
         try:
             t0 = datetime.fromisoformat(started)
-            elapsed = f"{(now - t0).total_seconds():.3f}s"
+            elapsed_s = (now - t0).total_seconds()
+            elapsed = f"{elapsed_s:.3f}s"
         except ValueError:
             elapsed = "?"
-    payload = detail if isinstance(detail, dict) else {}
+    lvl = str(level or "info").lower()
+    if lvl not in ("debug", "info", "warn", "error"):
+        lvl = "info"
+    comp = str(component or "helper").lower()
+    if comp not in ("ui", "helper", "system"):
+        comp = "helper"
+    payload = _sanitize_log_value(detail if isinstance(detail, dict) else {})
     line = {
+        "v": LOG_SCHEMA_VERSION,
         "ts": now.isoformat(timespec="milliseconds"),
         "elapsed": elapsed,
         "session": settings.get("sessionId") or "",
+        "level": lvl,
+        "component": comp,
+        "event": clip_str(event or "log", MAX_SHORT_STRING_LEN),
         "pid": os.getpid(),
-        "event": str(event or ""),
-        "detail": payload,
+        "detail": payload if isinstance(payload, dict) else {"value": payload},
     }
     with DEBUG_LOG_PATH.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+
+def write_session_banner(*, clear_file: bool = False) -> dict[str, Any]:
+    """Write/overwrite human banner + session.start env fingerprint."""
+    settings = load_ui_settings()
+    session_id = str(settings.get("sessionId") or "")
+    started_at = str(settings.get("sessionStartedAt") or "")
+    env = collect_env_fingerprint()
+    ensure_data_dir()
+    mode = "w" if clear_file else "a"
+    with DEBUG_LOG_PATH.open(mode, encoding="utf-8") as fh:
+        _write_human_banner(fh, env, session_id, started_at)
+    append_debug_log(
+        "session.start",
+        {
+            "sessionId": session_id,
+            "startedAt": started_at,
+            "env": env,
+        },
+        level="info",
+        component="system",
+    )
+    return env
 
 
 def begin_debug_session() -> dict[str, Any]:
@@ -661,21 +814,20 @@ def begin_debug_session() -> dict[str, Any]:
     settings["sessionId"] = secrets.token_hex(4)
     settings["sessionStartedAt"] = datetime.now().astimezone().isoformat(timespec="seconds")
     save_ui_settings(settings)
-    append_debug_log(
-        "session.start",
-        {
-            "logPath": str(DEBUG_LOG_PATH),
-            "sessionId": settings["sessionId"],
-            "startedAt": settings["sessionStartedAt"],
-        },
-    )
+    # Fresh capture each time logging is enabled.
+    write_session_banner(clear_file=True)
     return settings
 
 
 def end_debug_session() -> dict[str, Any]:
     settings = load_ui_settings()
     if settings.get("debugLogging"):
-        append_debug_log("session.end", {"sessionId": settings.get("sessionId") or ""})
+        append_debug_log(
+            "session.end",
+            {"sessionId": settings.get("sessionId") or ""},
+            level="info",
+            component="system",
+        )
     settings["debugLogging"] = False
     save_ui_settings(settings)
     return settings
@@ -691,6 +843,7 @@ def cmd_settings_get(_: argparse.Namespace) -> int:
             "sessionStartedAt": s.get("sessionStartedAt") or "",
             "uiLanguage": _normalize_ui_language(s.get("uiLanguage")),
             "logPath": str(DEBUG_LOG_PATH),
+            "logSchema": LOG_SCHEMA_VERSION,
         }
     )
 
@@ -720,6 +873,7 @@ def cmd_settings_set(args: argparse.Namespace) -> int:
             "sessionStartedAt": s.get("sessionStartedAt") or "",
             "uiLanguage": _normalize_ui_language(s.get("uiLanguage")),
             "logPath": str(DEBUG_LOG_PATH),
+            "logSchema": LOG_SCHEMA_VERSION,
         }
     )
 
@@ -738,8 +892,51 @@ def cmd_debug_log(args: argparse.Namespace) -> int:
     msg = getattr(args, "message", None)
     if msg:
         detail["message"] = str(msg)[:500]
-    append_debug_log(str(getattr(args, "event", "") or "log"), detail)
+    append_debug_log(
+        str(getattr(args, "event", "") or "log"),
+        detail,
+        level=str(getattr(args, "level", None) or "info"),
+        component=str(getattr(args, "component", None) or "ui"),
+    )
     return ok_json({"ok": True})
+
+
+def cmd_debug_log_clear(_: argparse.Namespace) -> int:
+    """Remove debug.log (+ rotated backup). If logging is on, rewrite a fresh banner."""
+    ensure_data_dir()
+    cleared: list[str] = []
+    for path in (DEBUG_LOG_PATH, DEBUG_LOG_PATH.with_suffix(".log.1")):
+        try:
+            if path.is_file():
+                path.unlink()
+                cleared.append(str(path))
+        except OSError as exc:
+            return err_json(f"failed to clear {path.name}: {exc}")
+
+    settings = load_ui_settings()
+    if settings.get("debugLogging"):
+        write_session_banner(clear_file=True)
+        append_debug_log(
+            "session.cleared",
+            {"cleared": cleared},
+            level="info",
+            component="system",
+        )
+    else:
+        try:
+            DEBUG_LOG_PATH.write_text("", encoding="utf-8")
+        except OSError as exc:
+            return err_json(f"failed to recreate debug.log: {exc}")
+
+    return ok_json(
+        {
+            "ok": True,
+            "cleared": cleared,
+            "logPath": str(DEBUG_LOG_PATH),
+            "logSchema": LOG_SCHEMA_VERSION,
+            "loggingActive": bool(settings.get("debugLogging")),
+        }
+    )
 
 
 def load_extra_projects() -> list[str]:
@@ -1533,6 +1730,19 @@ def main() -> int:
     p_dl.add_argument("--event", required=True)
     p_dl.add_argument("--json", default=None, help="JSON object with safe detail fields")
     p_dl.add_argument("--message", default=None)
+    p_dl.add_argument(
+        "--level",
+        default="info",
+        choices=["debug", "info", "warn", "error"],
+        help="Log severity for issue triage",
+    )
+    p_dl.add_argument(
+        "--component",
+        default="ui",
+        choices=["ui", "helper", "system"],
+        help="Which layer emitted the event",
+    )
+    sub.add_parser("debug-log-clear")
 
     args = parser.parse_args()
     handlers = {
@@ -1552,6 +1762,7 @@ def main() -> int:
         "settings-get": cmd_settings_get,
         "settings-set": cmd_settings_set,
         "debug-log": cmd_debug_log,
+        "debug-log-clear": cmd_debug_log_clear,
     }
     return handlers[args.cmd](args)
 

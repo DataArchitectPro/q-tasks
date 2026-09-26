@@ -4,6 +4,8 @@
 
 **Taskwarrior Time** — виджет панели [Omarchy](https://omarchy.org/), который выносит **Taskwarrior** и **Timewarrior** в shell. Создавайте, редактируйте, фильтруйте задачи и учитывайте время, не покидая рабочий стол.
 
+Маркетплейс: [plugins.omarchy.org/plugin.html?id=taskwarrior-time](https://plugins.omarchy.org/plugin.html?id=taskwarrior-time)
+
 ![Панель Taskwarrior Time](docs/screenshots/ru/00-hero.png)
 
 ## Что это такое
@@ -147,15 +149,21 @@ omarchy plugin remove taskwarrior-time
 
 Если что-то ведёт себя странно, включите отладку на вкладке **О плагине**.
 
-- Переключатель **Отладка: ВКЛ / ВЫКЛ**.
-- Пока лог включён, иконка на панели подсвечивается, в подсказке видно, что логирование активно.
-- События пишутся в:
+1. Откройте **О плагине** → включите **Отладку**.
+2. Один раз воспроизведите баг (при включении пишется свежий баннер сессии).
+3. **Открыть папку с логами** и приложите `~/.local/share/taskwarrior-time/debug.log` к issue.
+4. По желанию **Очистить логи** перед чистым захватом, затем снова включите отладку.
 
-  `~/.local/share/taskwarrior-time/debug.log`
+В начале файла — короткий человекочитаемый баннер и окружение:
 
-Лог только локальный (никуда не отправляется). При создании issue на GitHub полезно приложить релевантные фрагменты — так проще воспроизвести проблемы UI и хелпера (`bin/taskwarrior-time`).
+- id / версия плагина
+- версии Taskwarrior, Timewarrior и Omarchy (если доступны)
+- ОС / рабочий стол / locale / язык UI
+- пути к данным и логу
 
-Чтобы выключить лог, снова откройте вкладку **О плагине** и переведите переключатель в ВЫКЛ.
+Дальше события идут как **NDJSON** (по одному JSON на строку) с полями `level` (`info` / `warn` / `error`), `component` (`ui` / `helper` / `system`), `event` и `detail`. Длинный текст обрезается — всё равно не прикладывайте секреты и приватное содержимое задач.
+
+Лог только локальный. Когда закончите — выключите отладку.
 
 ## Сообщения об ошибках
 
@@ -166,7 +174,7 @@ omarchy plugin remove taskwarrior-time
    - версию Omarchy / Taskwarrior Time (см. О плагине)
    - шаги воспроизведения
    - ожидаемое и фактическое поведение
-   - по желанию: обезличенный фрагмент из `~/.local/share/taskwarrior-time/debug.log`
+   - полный файл `~/.local/share/taskwarrior-time/debug.log` из сессии с включённой отладкой (в баннере уже есть версии зависимостей)
 
 Пожалуйста, **не** прикладывайте секреты, токены и приватное содержимое задач.
 
@@ -176,4 +184,4 @@ omarchy plugin remove taskwarrior-time
 
 ## Автор
 
-**DataArchitectPro** — [репозиторий на GitHub](https://github.com/DataArchitectPro/taskwarrior-time)
+**DataArchitectPro** — [репозиторий на GitHub](https://github.com/DataArchitectPro/taskwarrior-time) · [маркетплейс Omarchy](https://plugins.omarchy.org/plugin.html?id=taskwarrior-time)
