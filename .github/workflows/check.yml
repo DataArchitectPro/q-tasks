@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout plugin
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install jq + qmllint
         run: |
@@ -22,7 +22,7 @@ jobs:
           sudo apt-get install -y jq qt6-declarative-dev
 
       - name: Checkout Omarchy shell (qmllint import path)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: basecamp/omarchy
           path: .ci/omarchy
