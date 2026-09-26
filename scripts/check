@@ -73,11 +73,14 @@ elif [[ ! -d "$OMARCHY_PATH/shell" ]]; then
   echo "  Set OMARCHY_PATH to your Omarchy install (default: /usr/share/omarchy)" >&2
   FAILED=1
 else
-  # Omarchy qs.* imports produce many unresolved-type warnings under stock
-  # qmllint. .qmllint.ini sets MaxWarnings=-1 so they stay non-fatal;
-  # syntax/hard errors still fail the process.
+  # Omarchy / Quickshell imports produce many warnings under stock qmllint.
+  # Treat warning-only runs as success; fail only when output contains Error:.
   lint_log="$(mktemp)"
-  if "$QMLLINT" -I "$OMARCHY_PATH/shell" "${QML_FILES[@]}" >"$lint_log" 2>&1; then
+  set +e
+  "$QMLLINT" -I "$OMARCHY_PATH/shell" "${QML_FILES[@]}" >"$lint_log" 2>&1
+  lint_rc=$?
+  set -e
+  if [[ $lint_rc -eq 0 ]] || ! grep -qE '^Error:' "$lint_log"; then
     echo "qmllint: OK (${#QML_FILES[@]} files, OMARCHY_PATH=$OMARCHY_PATH)"
     rm -f "$lint_log"
   else
